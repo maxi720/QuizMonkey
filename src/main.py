@@ -49,6 +49,7 @@ class QuizApp:
         self._ans_row_containers: list[ft.Container] = []
         self._next_container: ft.Container | None = None
         self._bottom_container: ft.Container | None = None
+        self._back_button: ft.Button | None = None
 
         self.show_startpage()
 
@@ -365,17 +366,12 @@ class QuizApp:
             style=self._next_btn_style(),
         )
 
-        back_button = ft.Button(
+        self._back_button = ft.Button(
             content="HOME",
             on_click=lambda e: self.show_startpage(),
-            style=ft.ButtonStyle(
-                text_style=ft.TextStyle(size=22, weight=ft.FontWeight.W_800),
-                color=ft.Colors.WHITE,
-                bgcolor=ft.Colors.BLUE,
-                padding=ft.Padding.symmetric(horizontal=18, vertical=14),
-                shape=ft.RoundedRectangleBorder(radius=15),
-            ),
+            style=self._back_btn_style(),
         )
+        back_button = self._back_button
 
         self._question_text = ft.Text(
             frage_data[0],
@@ -632,6 +628,21 @@ class QuizApp:
         self.correct_count = 0
         self.show_question_page()
 
+    def _back_btn_style(self) -> ft.ButtonStyle:
+        return ft.ButtonStyle(
+            text_style=ft.TextStyle(
+                size=self._get_text_size(22),
+                weight=ft.FontWeight.W_800,
+            ),
+            color=ft.Colors.WHITE,
+            bgcolor=ft.Colors.BLUE,
+            padding=ft.Padding.symmetric(
+                horizontal=self._get_pad(18),
+                vertical=self._get_pad(14),
+            ),
+            shape=ft.RoundedRectangleBorder(radius=15),
+        )
+
     def _next_btn_style(self) -> ft.ButtonStyle:
         return ft.ButtonStyle(
             text_style=ft.TextStyle(
@@ -679,6 +690,9 @@ class QuizApp:
             self._bottom_container.padding = ft.Padding.only(
                 left=20, right=20, bottom=self._get_pad(20)
             )
+            changed = True
+        if self._back_button:
+            self._back_button.style = self._back_btn_style()
             changed = True
         if changed:
             self.page.padding = ft.Padding.only(top=self._get_pad(20))
