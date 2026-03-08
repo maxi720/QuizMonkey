@@ -1,0 +1,21 @@
+[project]
+name = "quiz_app"
+version = "0.1.0"
+description = "Quiz App for own quizzes"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "flet==0.82.0"
+]
+
+[tool.flet]
+org = "com.maxdev"
+product = "QuizApp"
+icon = "src/assets/icon.png"
+
+[tool.flet.app]
+path = "src"
+module = "main"
+
+[tool.flet.ios]
+bundle_id = "com.maxdev.quizapp"
