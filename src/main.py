@@ -43,6 +43,13 @@ class QuizApp:
 
         self.page.on_resize = self._on_resize
 
+        self._question_text: ft.Text | None = None
+        self._answer_texts: list[ft.Text] = []
+        self._q_container: ft.Container | None = None
+        self._ans_row_containers: list[ft.Container] = []
+        self._next_container: ft.Container | None = None
+        self._bottom_container: ft.Container | None = None
+
         self.show_startpage()
 
     def show_message(self, text: str) -> None:
@@ -53,6 +60,17 @@ class QuizApp:
             )
         )
         self.page.update()
+
+    def _get_scale(self) -> float:
+        width = self.page.width or 600
+        height = self.page.height or 800
+        return max(0.5, min(1.0, min(width / 600, height / 750)))
+
+    def _get_text_size(self, base: int) -> int:
+        return max(10, int(base * self._get_scale()))
+
+    def _get_pad(self, base: int) -> int:
+        return max(2, int(base * self._get_scale()))
 
     def make_button_style(
         self,
@@ -298,20 +316,31 @@ class QuizApp:
 
         self.correct_answer = frage_data[5]
         self.answer_buttons = []
+        self._answer_texts = []
+        self._ans_row_containers = []
         answer_containers: list[ft.Control] = []
 
         for i in range(1, 5):
             answer_text = frage_data[i]
             if answer_text:
+                ans_text = ft.Text(
+                    answer_text,
+                    size=self._get_text_size(28),
+                    weight=ft.FontWeight.W_500,
+                    color=ft.Colors.WHITE,
+                    text_align=ft.TextAlign.LEFT,
+                )
+                self._answer_texts.append(ans_text)
                 btn = ft.Button(
-                    content=answer_text,
+                    content=ft.Container(
+                        content=ans_text,
+                        alignment=ft.Alignment(-1, 0),
+                        expand=True,
+                    ),
                     data=answer_text,
                     expand=True,
                     on_click=self.create_answer_handler(answer_text),
                     style=ft.ButtonStyle(
-                        text_style=ft.TextStyle(
-                            size=30, weight=ft.FontWeight.W_500
-                        ),
                         color=ft.Colors.WHITE,
                         bgcolor=ft.Colors.LIGHT_BLUE,
                         padding=ft.Padding.all(10),
@@ -320,12 +349,14 @@ class QuizApp:
                     ),
                 )
                 self.answer_buttons.append(btn)
-                answer_containers.append(
-                    ft.Container(
-                        content=ft.Row([btn]),
-                        padding=ft.Padding.symmetric(horizontal=16),
-                    )
+                ans_container = ft.Container(
+                    content=ft.Row([btn]),
+                    padding=ft.Padding.symmetric(
+                        horizontal=16, vertical=self._get_pad(3)
+                    ),
                 )
+                self._ans_row_containers.append(ans_container)
+                answer_containers.append(ans_container)
 
         self.next_button = ft.Button(
             content="NEXT",
@@ -338,54 +369,70 @@ class QuizApp:
             content="HOME",
             on_click=lambda e: self.show_startpage(),
             style=ft.ButtonStyle(
-                text_style=ft.TextStyle(size=18, weight=ft.FontWeight.W_800),
+                text_style=ft.TextStyle(size=22, weight=ft.FontWeight.W_800),
                 color=ft.Colors.WHITE,
                 bgcolor=ft.Colors.BLUE,
-                padding=ft.Padding.symmetric(horizontal=8, vertical=10),
+                padding=ft.Padding.symmetric(horizontal=18, vertical=14),
                 shape=ft.RoundedRectangleBorder(radius=15),
             ),
         )
 
+        self._question_text = ft.Text(
+            frage_data[0],
+            style=ft.TextStyle(
+                size=self._get_text_size(30),
+                weight=ft.FontWeight.W_600,
+                color=ft.Colors.WHITE,
+            ),
+        )
+
+        self._q_container = ft.Container(
+            content=self._question_text,
+            alignment=ft.Alignment.TOP_LEFT,
+            padding=ft.Padding.only(
+                left=16,
+                top=self._get_pad(25),
+                bottom=self._get_pad(15),
+            ),
+        )
+
+        self._next_container = ft.Container(
+            content=self.next_button,
+            padding=ft.Padding.only(top=self._get_pad(12), right=16),
+            alignment=ft.Alignment.CENTER_RIGHT,
+        )
+
+        self._bottom_container = ft.Container(
+            content=ft.Row(
+                controls=[
+                    back_button,
+                    ft.Container(expand=True),
+                    ft.Text(
+                        f"{self.current_question + 1}/{len(self.fragen)}",
+                        style=ft.TextStyle(
+                            size=self._get_text_size(22),
+                            weight=ft.FontWeight.W_500,
+                            color=ft.Colors.GREY,
+                        ),
+                    ),
+                ],
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=ft.Padding.only(
+                left=20, right=20, bottom=self._get_pad(20)
+            ),
+        )
+
+        self.page.padding = ft.Padding.only(top=self._get_pad(20))
+
         self.page.controls.append(
             ft.Column(
                 controls=[
-                    ft.Container(
-                        content=ft.Text(
-                            frage_data[0],
-                            style=ft.TextStyle(
-                                size=30,
-                                weight=ft.FontWeight.W_600,
-                                color=ft.Colors.WHITE,
-                            ),
-                        ),
-                        alignment=ft.Alignment.TOP_LEFT,
-                        padding=ft.Padding.only(left=16, top=30, bottom=20),
-                    ),
+                    self._q_container,
                     *answer_containers,
-                    ft.Container(
-                        content=self.next_button,
-                        padding=ft.Padding.only(top=20, right=16),
-                        alignment=ft.Alignment.CENTER_RIGHT,
-                    ),
+                    self._next_container,
                     ft.Container(expand=True),
-                    ft.Container(
-                        content=ft.Row(
-                            controls=[
-                                back_button,
-                                ft.Container(expand=True),
-                                ft.Text(
-                                    f"{self.current_question + 1}/{len(self.fragen)}",
-                                    style=ft.TextStyle(
-                                        size=25,
-                                        weight=ft.FontWeight.W_500,
-                                        color=ft.Colors.GREY,
-                                    ),
-                                ),
-                            ],
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        padding=ft.Padding.only(left=20, right=20, bottom=24),
-                    ),
+                    self._bottom_container,
                 ],
                 expand=True,
                 spacing=0,
@@ -586,26 +633,55 @@ class QuizApp:
         self.show_question_page()
 
     def _next_btn_style(self) -> ft.ButtonStyle:
-        width = self.page.width or 600
-        small = width < 450
-
         return ft.ButtonStyle(
             text_style=ft.TextStyle(
-                size=24 if small else 30,
+                size=self._get_text_size(30),
                 weight=ft.FontWeight.W_800,
             ),
             color=ft.Colors.WHITE,
             bgcolor=ft.Colors.BLUE,
             padding=ft.Padding.symmetric(
                 horizontal=14,
-                vertical=10 if small else 17,
+                vertical=self._get_text_size(17),
             ),
             shape=ft.RoundedRectangleBorder(radius=15),
         )
 
     def _on_resize(self, e) -> None:
+        changed = False
         if self.next_button:
             self.next_button.style = self._next_btn_style()
+            changed = True
+        if self._question_text:
+            self._question_text.style.size = self._get_text_size(30)
+            changed = True
+        for ans_text in self._answer_texts:
+            ans_text.size = self._get_text_size(28)
+            changed = True
+        if self._q_container:
+            self._q_container.padding = ft.Padding.only(
+                left=16,
+                top=self._get_pad(25),
+                bottom=self._get_pad(15),
+            )
+            changed = True
+        for c in self._ans_row_containers:
+            c.padding = ft.Padding.symmetric(
+                horizontal=16, vertical=self._get_pad(3)
+            )
+            changed = True
+        if self._next_container:
+            self._next_container.padding = ft.Padding.only(
+                top=self._get_pad(12), right=16
+            )
+            changed = True
+        if self._bottom_container:
+            self._bottom_container.padding = ft.Padding.only(
+                left=20, right=20, bottom=self._get_pad(20)
+            )
+            changed = True
+        if changed:
+            self.page.padding = ft.Padding.only(top=self._get_pad(20))
             self.page.update()
 
     def create_answer_handler(self, answer: str):
