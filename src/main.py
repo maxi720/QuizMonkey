@@ -42,6 +42,7 @@ class QuizApp:
         self.next_button: ft.Button | None = None
 
         self.page.on_resize = self._on_resize
+        self._current_view = "start"
 
         self._question_text: ft.Text | None = None
         self._answer_texts: list[ft.Text] = []
@@ -65,7 +66,7 @@ class QuizApp:
     def _get_scale(self) -> float:
         width = self.page.width or 600
         height = self.page.height or 800
-        return max(0.5, min(1.0, min(width / 600, height / 750)))
+        return max(0.5, min(1.5, min(width / 600, height / 750)))
 
     def _get_text_size(self, base: int) -> int:
         return max(10, int(base * self._get_scale()))
@@ -91,13 +92,18 @@ class QuizApp:
         )
 
     def show_startpage(self) -> None:
+        self._current_view = "start"
         self.page.controls.clear()
         self.next_button = None
         self.load_custom_quizzes()
 
         header = ft.Container(
-            content=ft.Text("Choose a Quiz", size=40, weight=ft.FontWeight.BOLD),
-            padding=ft.Padding.only(top=30, bottom=10),
+            content=ft.Text(
+                "Choose a Quiz",
+                size=self._get_text_size(40),
+                weight=ft.FontWeight.BOLD,
+            ),
+            padding=ft.Padding.only(top=self._get_pad(30), bottom=self._get_pad(10)),
             alignment=ft.Alignment.CENTER,
         )
 
@@ -114,21 +120,32 @@ class QuizApp:
                     ft.Button(
                         content="DELETE",
                         on_click=self.remove_csv,
-                        height=45,
+                        height=self._get_pad(45),
                         expand=True,
-                        style=self.make_button_style(ft.Colors.RED),
+                        style=self.make_button_style(
+                            ft.Colors.RED,
+                            text_size=self._get_text_size(18),
+                        ),
                     ),
                     ft.Button(
                         content="UPLOAD",
                         on_click=self.upload_csv,
-                        height=45,
+                        height=self._get_pad(45),
                         expand=True,
-                        style=self.make_button_style(ft.Colors.GREEN),
+                        style=self.make_button_style(
+                            ft.Colors.GREEN,
+                            text_size=self._get_text_size(18),
+                        ),
                     ),
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             ),
-            padding=ft.Padding.only(left=16, right=16, top=10, bottom=20),
+            padding=ft.Padding.only(
+                left=self._get_pad(16),
+                right=self._get_pad(16),
+                top=self._get_pad(10),
+                bottom=self._get_pad(20),
+            ),
         )
 
         self.page.controls.append(
@@ -160,11 +177,14 @@ class QuizApp:
                     on_click=lambda e, f=filepath: self.start_quiz(f),
                     style=ft.ButtonStyle(
                         text_style=ft.TextStyle(
-                            size=18, weight=ft.FontWeight.W_600
+                            size=self._get_text_size(18), weight=ft.FontWeight.W_600
                         ),
                         color=ft.Colors.WHITE,
                         bgcolor=ft.Colors.PURPLE,
-                        padding=ft.Padding.symmetric(horizontal=12, vertical=12),
+                        padding=ft.Padding.symmetric(
+                            horizontal=self._get_pad(12),
+                            vertical=self._get_pad(12),
+                        ),
                         shape=ft.RoundedRectangleBorder(radius=12),
                     ),
                 )
@@ -172,7 +192,10 @@ class QuizApp:
                 self.quiz_buttons.append(
                     ft.Container(
                         content=ft.Row([quiz_button]),
-                        padding=ft.Padding.symmetric(horizontal=16, vertical=4),
+                        padding=ft.Padding.symmetric(
+                            horizontal=self._get_pad(16),
+                            vertical=self._get_pad(4),
+                        ),
                     )
                 )
 
@@ -269,6 +292,7 @@ class QuizApp:
             self.show_message("Keine Fragen in dieser Datei gefunden.")
 
     def show_question_page(self) -> None:
+        self._current_view = "question"
         self.page.controls.clear()
 
         if self.current_question >= len(self.fragen):
@@ -486,6 +510,7 @@ class QuizApp:
         self.show_question_page()
 
     def show_result(self) -> None:
+        self._current_view = "result"
         total = len(self.fragen)
         correct = self.correct_count
         wrong = total - correct
@@ -497,12 +522,14 @@ class QuizApp:
             ft.Container(
                 content=ft.Text(
                     "RESULT",
-                    size=36,
+                    size=self._get_text_size(36),
                     weight=ft.FontWeight.BOLD,
                     color=ft.Colors.WHITE,
                 ),
                 alignment=ft.Alignment.CENTER,
-                padding=ft.Padding.only(top=20, bottom=16),
+                padding=ft.Padding.only(
+                    top=self._get_pad(20), bottom=self._get_pad(16)
+                ),
             )
         )
 
@@ -513,45 +540,53 @@ class QuizApp:
                         ft.Container(
                             content=ft.Column(
                                 controls=[
-                                    ft.Text("CORRECT", size=16, color=ft.Colors.WHITE),
+                                    ft.Text(
+                                        "CORRECT",
+                                        size=self._get_text_size(16),
+                                        color=ft.Colors.WHITE,
+                                    ),
                                     ft.Text(
                                         str(correct),
-                                        size=48,
+                                        size=self._get_text_size(48),
                                         weight=ft.FontWeight.BOLD,
                                         color=ft.Colors.WHITE,
                                     ),
                                 ],
                                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                                spacing=4,
+                                spacing=self._get_pad(4),
                             ),
                             bgcolor=ft.Colors.GREEN,
                             border_radius=12,
-                            padding=20,
+                            padding=self._get_pad(20),
                             expand=True,
                         ),
                         ft.Container(
                             content=ft.Column(
                                 controls=[
-                                    ft.Text("FALSE", size=16, color=ft.Colors.WHITE),
+                                    ft.Text(
+                                        "FALSE",
+                                        size=self._get_text_size(16),
+                                        color=ft.Colors.WHITE,
+                                    ),
                                     ft.Text(
                                         str(wrong),
-                                        size=48,
+                                        size=self._get_text_size(48),
                                         weight=ft.FontWeight.BOLD,
                                         color=ft.Colors.WHITE,
                                     ),
                                 ],
                                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                                spacing=4,
+                                spacing=self._get_pad(4),
                             ),
                             bgcolor=ft.Colors.RED,
                             border_radius=12,
-                            padding=20,
+                            padding=self._get_pad(20),
                             expand=True,
                         ),
                     ],
-                    spacing=12,
+                    spacing=self._get_pad(12),
                 ),
-                padding=ft.Padding.symmetric(horizontal=16),
+                padding=ft.Padding.symmetric(horizontal=self._get_pad(16)),
             )
         )
 
@@ -559,25 +594,27 @@ class QuizApp:
             ft.Container(
                 content=ft.Text(
                     f"{score} %",
-                    size=60,
+                    size=self._get_text_size(60),
                     weight=ft.FontWeight.BOLD,
                     color=ft.Colors.WHITE,
                     text_align=ft.TextAlign.CENTER,
                 ),
                 alignment=ft.Alignment.CENTER,
-                padding=ft.Padding.symmetric(vertical=20),
+                padding=ft.Padding.symmetric(vertical=self._get_pad(20)),
             )
         )
 
         btn_end = ft.Button(
             content="BACK HOME",
             on_click=lambda e: self.show_startpage(),
-            height=55,
+            height=self._get_pad(55),
             style=ft.ButtonStyle(
-                text_style=ft.TextStyle(size=20, weight=ft.FontWeight.W_600),
+                text_style=ft.TextStyle(
+                    size=self._get_text_size(20), weight=ft.FontWeight.W_600
+                ),
                 color=ft.Colors.WHITE,
                 bgcolor=ft.Colors.BLUE,
-                padding=ft.Padding.symmetric(vertical=15),
+                padding=ft.Padding.symmetric(vertical=self._get_pad(15)),
                 shape=ft.RoundedRectangleBorder(radius=12),
             ),
         )
@@ -589,12 +626,14 @@ class QuizApp:
                 ft.Button(
                     content="REPEAT INCORRECT QUESTIONS",
                     on_click=self.restart_wrong_questions,
-                    height=55,
+                    height=self._get_pad(55),
                     style=ft.ButtonStyle(
-                        text_style=ft.TextStyle(size=20, weight=ft.FontWeight.W_600),
+                        text_style=ft.TextStyle(
+                            size=self._get_text_size(20), weight=ft.FontWeight.W_600
+                        ),
                         color=ft.Colors.WHITE,
                         bgcolor=ft.Colors.ORANGE_500,
-                        padding=ft.Padding.symmetric(vertical=15),
+                        padding=ft.Padding.symmetric(vertical=self._get_pad(15)),
                         shape=ft.RoundedRectangleBorder(radius=12),
                     ),
                 )
@@ -609,10 +648,14 @@ class QuizApp:
                     ft.Container(
                         content=ft.Column(
                             controls=col_controls,
-                            spacing=12,
+                            spacing=self._get_pad(12),
                             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                         ),
-                        padding=ft.Padding.only(left=16, right=16, bottom=20),
+                        padding=ft.Padding.only(
+                            left=self._get_pad(16),
+                            right=self._get_pad(16),
+                            bottom=self._get_pad(20),
+                        ),
                     ),
                 ],
                 expand=True,
@@ -659,6 +702,13 @@ class QuizApp:
         )
 
     def _on_resize(self, e) -> None:
+        if self._current_view == "start":
+            self.show_startpage()
+            return
+        if self._current_view == "result":
+            self.show_result()
+            return
+
         changed = False
         if self.next_button:
             self.next_button.style = self._next_btn_style()
