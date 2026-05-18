@@ -1,6 +1,7 @@
 import csv
 import os
 import shutil
+from pathlib import Path
 
 import flet as ft
 
@@ -13,6 +14,18 @@ class QuizApp:
         self.page.theme_mode = ft.ThemeMode.DARK
         self.page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
         self.page.padding = ft.Padding.only(top=30)
+
+        self.color_bg = "#0F172A"
+        self.color_text = "#F8FAFC"
+        self.color_muted = "#CBD5E1"
+        self.color_primary = "#4F46E5"
+        self.color_info = "#2563EB"
+        self.color_success = "#16A34A"
+        self.color_danger = "#DC2626"
+        self.color_warning = "#EA580C"
+        self.color_answer = "#334155"
+        self.color_answer_border = "#64748B"
+        self.page.bgcolor = self.color_bg
 
         platform = self.page.platform
         self.is_mobile = platform is not None and platform.is_mobile()
@@ -36,21 +49,18 @@ class QuizApp:
         self.current_question = 0
         self.correct_answer = ""
         self.correct_count = 0
+        self.selected_answer: str | None = None
+        self.answer_locked = False
         self.wrong_questions: list[list[str]] = []
         self.quiz_buttons: list[ft.Control] = []
         self.answer_buttons: list[ft.Button] = []
         self.next_button: ft.Button | None = None
 
+        self.file_picker = ft.FilePicker()
+        self.page.services.append(self.file_picker)
+
         self.page.on_resize = self._on_resize
         self._current_view = "start"
-
-        self._question_text: ft.Text | None = None
-        self._answer_texts: list[ft.Text] = []
-        self._q_container: ft.Container | None = None
-        self._ans_row_containers: list[ft.Container] = []
-        self._next_container: ft.Container | None = None
-        self._bottom_container: ft.Container | None = None
-        self._back_button: ft.Button | None = None
 
         self.show_startpage()
 
@@ -68,6 +78,22 @@ class QuizApp:
         height = self.page.height or 800
         return max(0.5, min(1.5, min(width / 600, height / 750)))
 
+    def _get_view_mode(self) -> str:
+        width = self.page.width or 600
+        if width < 520:
+            return "compact"
+        if width < 880:
+            return "medium"
+        return "expanded"
+
+    def _side_padding(self) -> int:
+        mode = self._get_view_mode()
+        if mode == "compact":
+            return 10
+        if mode == "medium":
+            return 16
+        return 24
+
     def _get_text_size(self, base: int) -> int:
         return max(10, int(base * self._get_scale()))
 
@@ -84,24 +110,110 @@ class QuizApp:
     ) -> ft.ButtonStyle:
         return ft.ButtonStyle(
             text_style=ft.TextStyle(size=text_size, weight=ft.FontWeight.W_600),
-            color=ft.Colors.WHITE,
+            color=self.color_text,
             bgcolor=bgcolor,
             padding=padding,
             shape=ft.RoundedRectangleBorder(radius=radius),
             side=side,
         )
 
+    def _render_current_view(self) -> None:
+        if self._current_view == "start":
+            self.show_startpage()
+        elif self._current_view == "result":
+            self.show_result()
+        elif self._current_view == "question":
+            self.show_question_page()
+
+    def _get_quiz_destination(self, original_filename: str) -> str:
+        safe_name = os.path.basename(original_filename)
+        if not safe_name.lower().endswith(".csv"):
+            safe_name = f"{safe_name}.csv"
+
+        destination = Path(self.quiz_folder) / safe_name
+        if not destination.exists():
+            return str(destination)
+
+        stem = destination.stem
+        suffix = destination.suffix
+        index = 1
+        while True:
+            candidate = destination.with_name(f"{stem}_{index}{suffix}")
+            if not candidate.exists():
+                return str(candidate)
+            index += 1
+
+    def _validate_row(self, row: list[str], row_number: int) -> tuple[bool, str | None]:
+        if len(row) != 6:
+            return (
+                False,
+                f"Zeile {row_number}: Erwartet 6 Spalten, gefunden {len(row)}.",
+            )
+
+        row[0] = row[0].lstrip("\ufeff")
+
+        if not row[0].strip():
+            return False, f"Zeile {row_number}: Frage ist leer."
+
+        answers = row[1:5]
+        non_empty_answers = [answer for answer in answers if answer != ""]
+        if len(non_empty_answers) < 2:
+            return (
+                False,
+                f"Zeile {row_number}: Mindestens 2 Antwortoptionen erforderlich.",
+            )
+
+        if row[5] not in answers:
+            return (
+                False,
+                f"Zeile {row_number}: correctAnswer muss exakt einer Antwort entsprechen.",
+            )
+
+        return True, None
+
+    def _parse_quiz_rows(self, reader: csv.reader) -> tuple[list[list[str]], list[str]]:
+        questions: list[list[str]] = []
+        errors: list[str] = []
+
+        for row_number, row in enumerate(reader, start=1):
+            if not any(cell.strip() for cell in row):
+                continue
+
+            is_valid, error = self._validate_row(row, row_number)
+            if is_valid:
+                questions.append(row)
+            elif error:
+                errors.append(error)
+
+        if not questions and not errors:
+            errors.append("Keine Fragen gefunden.")
+
+        return questions, errors
+
+    def _show_validation_errors(self, errors: list[str]) -> None:
+        first_error = errors[0]
+        if len(errors) > 1:
+            self.show_message(f"Dateifehler ({len(errors)}): {first_error}")
+        else:
+            self.show_message(f"Dateifehler: {first_error}")
+
     def show_startpage(self) -> None:
         self._current_view = "start"
         self.page.controls.clear()
         self.next_button = None
+        self.selected_answer = None
+        self.answer_locked = False
         self.load_custom_quizzes()
+
+        side_padding = self._side_padding()
+        compact = self._get_view_mode() == "compact"
 
         header = ft.Container(
             content=ft.Text(
                 "Choose a Quiz",
                 size=self._get_text_size(40),
                 weight=ft.FontWeight.BOLD,
+                color=self.color_text,
             ),
             padding=ft.Padding.only(top=self._get_pad(30), bottom=self._get_pad(10)),
             alignment=ft.Alignment.CENTER,
@@ -115,34 +227,61 @@ class QuizApp:
         )
 
         action_buttons = ft.Container(
-            content=ft.Row(
-                controls=[
-                    ft.Button(
-                        content="DELETE",
-                        on_click=self.remove_csv,
-                        height=self._get_pad(45),
-                        expand=True,
-                        style=self.make_button_style(
-                            ft.Colors.RED,
-                            text_size=self._get_text_size(18),
+            content=(
+                ft.Column(
+                    controls=[
+                        ft.Button(
+                            content="Upload",
+                            on_click=self.upload_csv,
+                            height=self._get_pad(45),
+                            style=self.make_button_style(
+                                self.color_success,
+                                text_size=self._get_text_size(18),
+                            ),
                         ),
-                    ),
-                    ft.Button(
-                        content="UPLOAD",
-                        on_click=self.upload_csv,
-                        height=self._get_pad(45),
-                        expand=True,
-                        style=self.make_button_style(
-                            ft.Colors.GREEN,
-                            text_size=self._get_text_size(18),
+                        ft.Button(
+                            content="Delete",
+                            on_click=self.remove_csv,
+                            height=self._get_pad(45),
+                            style=self.make_button_style(
+                                self.color_danger,
+                                text_size=self._get_text_size(18),
+                            ),
                         ),
-                    ),
-                ],
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    ],
+                    spacing=self._get_pad(8),
+                    horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                )
+                if compact
+                else ft.Row(
+                    controls=[
+                        ft.Button(
+                            content="Delete",
+                            on_click=self.remove_csv,
+                            height=self._get_pad(45),
+                            expand=True,
+                            style=self.make_button_style(
+                                self.color_danger,
+                                text_size=self._get_text_size(18),
+                            ),
+                        ),
+                        ft.Button(
+                            content="Upload",
+                            on_click=self.upload_csv,
+                            height=self._get_pad(45),
+                            expand=True,
+                            style=self.make_button_style(
+                                self.color_success,
+                                text_size=self._get_text_size(18),
+                            ),
+                        ),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                )
             ),
             padding=ft.Padding.only(
-                left=self._get_pad(16),
-                right=self._get_pad(16),
+                left=self._get_pad(side_padding),
+                right=self._get_pad(side_padding),
                 top=self._get_pad(10),
                 bottom=self._get_pad(20),
             ),
@@ -159,6 +298,7 @@ class QuizApp:
 
     def load_custom_quizzes(self) -> None:
         self.quiz_buttons.clear()
+        side_padding = self._side_padding()
 
         try:
             files = sorted(os.listdir(self.quiz_folder))
@@ -175,17 +315,13 @@ class QuizApp:
                     data=filepath,
                     expand=True,
                     on_click=lambda e, f=filepath: self.start_quiz(f),
-                    style=ft.ButtonStyle(
-                        text_style=ft.TextStyle(
-                            size=self._get_text_size(18), weight=ft.FontWeight.W_600
-                        ),
-                        color=ft.Colors.WHITE,
-                        bgcolor=ft.Colors.PURPLE,
+                    style=self.make_button_style(
+                        self.color_primary,
+                        text_size=self._get_text_size(18),
                         padding=ft.Padding.symmetric(
                             horizontal=self._get_pad(12),
                             vertical=self._get_pad(12),
                         ),
-                        shape=ft.RoundedRectangleBorder(radius=12),
                     ),
                 )
 
@@ -193,7 +329,7 @@ class QuizApp:
                     ft.Container(
                         content=ft.Row([quiz_button]),
                         padding=ft.Padding.symmetric(
-                            horizontal=self._get_pad(16),
+                            horizontal=self._get_pad(side_padding),
                             vertical=self._get_pad(4),
                         ),
                     )
@@ -201,11 +337,11 @@ class QuizApp:
 
     async def upload_csv(self, e) -> None:
         try:
-            picker = ft.FilePicker()
-            files = await picker.pick_files(
+            files = await self.file_picker.pick_files(
                 allow_multiple=False,
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["csv"],
+                with_data=True,
             )
 
             if not files:
@@ -219,14 +355,27 @@ class QuizApp:
                 return
 
             file_path = getattr(selected_file, "path", None)
-            if not file_path:
-                self.show_message("Fehler: Kein Zugriff auf Datei.")
+            destination = self._get_quiz_destination(original_filename)
+
+            if file_path:
+                shutil.copy(file_path, destination)
+            elif selected_file.bytes is not None:
+                with open(destination, "wb") as target_file:
+                    target_file.write(selected_file.bytes)
+            else:
+                self.show_message("Fehler: Kein Zugriff auf Dateiinhalt.")
                 return
 
-            destination = os.path.join(self.quiz_folder, original_filename)
-            shutil.copy(file_path, destination)
+            self.load_questions(destination, show_errors=True)
+            if not self.fragen:
+                try:
+                    os.remove(destination)
+                except OSError:
+                    pass
+                return
 
-            self.show_message(f"Quiz '{original_filename}' hochgeladen!")
+            uploaded_name = os.path.basename(destination)
+            self.show_message(f"Quiz '{uploaded_name}' hochgeladen!")
             self.show_startpage()
 
         except Exception as ex:
@@ -288,12 +437,12 @@ class QuizApp:
         self.load_questions(filename)
         if self.fragen:
             self.show_question_page()
-        else:
-            self.show_message("Keine Fragen in dieser Datei gefunden.")
 
     def show_question_page(self) -> None:
         self._current_view = "question"
         self.page.controls.clear()
+        side_padding = self._side_padding()
+        compact = self._get_view_mode() == "compact"
 
         if self.current_question >= len(self.fragen):
             self.show_result()
@@ -310,16 +459,16 @@ class QuizApp:
                                 controls=[
                                     ft.Text(
                                         "FILE ERROR!",
-                                        size=50,
-                                        color=ft.Colors.RED,
+                                        size=self._get_text_size(40),
+                                        color=self.color_danger,
                                         text_align=ft.TextAlign.CENTER,
                                     ),
                                     ft.Button(
-                                        content="BACK",
+                                        content="Back",
                                         on_click=lambda e: self.show_startpage(),
                                         style=self.make_button_style(
-                                            ft.Colors.BLUE,
-                                            text_size=40,
+                                            self.color_info,
+                                            text_size=self._get_text_size(30),
                                             padding=ft.Padding.all(15),
                                         ),
                                     ),
@@ -341,8 +490,6 @@ class QuizApp:
 
         self.correct_answer = frage_data[5]
         self.answer_buttons = []
-        self._answer_texts = []
-        self._ans_row_containers = []
         answer_containers: list[ft.Control] = []
 
         for i in range(1, 5):
@@ -352,10 +499,9 @@ class QuizApp:
                     answer_text,
                     size=self._get_text_size(28),
                     weight=ft.FontWeight.W_500,
-                    color=ft.Colors.WHITE,
+                    color=self.color_text,
                     text_align=ft.TextAlign.LEFT,
                 )
-                self._answer_texts.append(ans_text)
                 btn = ft.Button(
                     content=ft.Container(
                         content=ans_text,
@@ -364,82 +510,85 @@ class QuizApp:
                     ),
                     data=answer_text,
                     expand=True,
-                    on_click=self.create_answer_handler(answer_text),
+                    on_click=lambda e, a=answer_text: self.check_answer(a),
                     style=ft.ButtonStyle(
-                        color=ft.Colors.WHITE,
-                        bgcolor=ft.Colors.LIGHT_BLUE,
+                        color=self.color_text,
+                        bgcolor=self.color_answer,
                         padding=ft.Padding.all(10),
                         shape=ft.RoundedRectangleBorder(radius=12),
-                        side=ft.BorderSide(3, ft.Colors.BLACK),
+                        side=ft.BorderSide(2, self.color_answer_border),
                     ),
                 )
                 self.answer_buttons.append(btn)
                 ans_container = ft.Container(
                     content=ft.Row([btn]),
                     padding=ft.Padding.symmetric(
-                        horizontal=16, vertical=self._get_pad(3)
+                        horizontal=self._get_pad(side_padding),
+                        vertical=self._get_pad(3),
                     ),
                 )
-                self._ans_row_containers.append(ans_container)
                 answer_containers.append(ans_container)
 
         self.next_button = ft.Button(
-            content="NEXT",
+            content="Next",
             on_click=self.next_question,
-            disabled=True,
+            disabled=not self.answer_locked,
             style=self._next_btn_style(),
         )
 
-        self._back_button = ft.Button(
-            content="HOME",
+        back_button = ft.Button(
+            content="Home",
             on_click=lambda e: self.show_startpage(),
             style=self._back_btn_style(),
         )
-        back_button = self._back_button
 
-        self._question_text = ft.Text(
+        question_text = ft.Text(
             frage_data[0],
             style=ft.TextStyle(
                 size=self._get_text_size(30),
                 weight=ft.FontWeight.W_600,
-                color=ft.Colors.WHITE,
+                color=self.color_text,
             ),
         )
 
-        self._q_container = ft.Container(
-            content=self._question_text,
+        q_container = ft.Container(
+            content=question_text,
             alignment=ft.Alignment.TOP_LEFT,
             padding=ft.Padding.only(
-                left=16,
+                left=self._get_pad(side_padding),
                 top=self._get_pad(25),
                 bottom=self._get_pad(15),
             ),
         )
 
-        self._next_container = ft.Container(
+        next_container = ft.Container(
             content=self.next_button,
-            padding=ft.Padding.only(top=self._get_pad(12), right=16),
+            padding=ft.Padding.only(top=self._get_pad(12), right=self._get_pad(side_padding)),
             alignment=ft.Alignment.CENTER_RIGHT,
         )
 
-        self._bottom_container = ft.Container(
+        progress_text = ft.Text(
+            f"{self.current_question + 1}/{len(self.fragen)}",
+            style=ft.TextStyle(
+                size=self._get_text_size(22),
+                weight=ft.FontWeight.W_500,
+                color=self.color_muted,
+            ),
+        )
+
+        bottom_container = ft.Container(
             content=ft.Row(
                 controls=[
                     back_button,
                     ft.Container(expand=True),
-                    ft.Text(
-                        f"{self.current_question + 1}/{len(self.fragen)}",
-                        style=ft.TextStyle(
-                            size=self._get_text_size(22),
-                            weight=ft.FontWeight.W_500,
-                            color=ft.Colors.GREY,
-                        ),
-                    ),
+                    progress_text,
                 ],
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             padding=ft.Padding.only(
-                left=20, right=20, bottom=self._get_pad(20)
+                left=self._get_pad(side_padding),
+                right=self._get_pad(side_padding),
+                bottom=self._get_pad(20),
             ),
         )
 
@@ -448,65 +597,87 @@ class QuizApp:
         self.page.controls.append(
             ft.Column(
                 controls=[
-                    self._q_container,
+                    q_container,
                     *answer_containers,
-                    self._next_container,
-                    ft.Container(expand=True),
-                    self._bottom_container,
+                    next_container,
+                    ft.Container(expand=not compact),
+                    bottom_container,
                 ],
                 expand=True,
                 spacing=0,
             )
         )
 
+        if self.answer_locked and self.selected_answer is not None:
+            self._apply_answer_feedback(self.selected_answer)
+
         self.page.update()
 
-    def load_questions(self, filename: str) -> None:
+    def load_questions(self, filename: str, show_errors: bool = True) -> None:
         self.fragen.clear()
+        self.selected_answer = None
+        self.answer_locked = False
 
         try:
             with open(filename, "r", encoding="utf-8") as data:
                 reader = csv.reader(data, delimiter=";")
-                for zeile in reader:
-                    if any(cell.strip() for cell in zeile):
-                        self.fragen.append(zeile)
+                self.fragen, errors = self._parse_quiz_rows(reader)
+                if errors:
+                    self.fragen.clear()
+                    if show_errors:
+                        self._show_validation_errors(errors)
         except FileNotFoundError:
-            self.show_message(f"Datei '{filename}' nicht gefunden!")
+            if show_errors:
+                self.show_message(f"Datei '{filename}' nicht gefunden!")
         except UnicodeDecodeError:
-            self.show_message(
-                f"Datei '{filename}' hat eine ungültige Zeichenkodierung (kein UTF-8)."
-            )
+            if show_errors:
+                self.show_message(
+                    f"Datei '{filename}' hat eine ungültige Zeichenkodierung (kein UTF-8)."
+                )
         except PermissionError:
-            self.show_message(f"Keine Leseberechtigung für '{filename}'.")
+            if show_errors:
+                self.show_message(f"Keine Leseberechtigung für '{filename}'.")
         except Exception as ex:
-            self.show_message(f"Fehler beim Laden der Datei: {ex}")
+            if show_errors:
+                self.show_message(f"Fehler beim Laden der Datei: {ex}")
 
         self.current_question = 0
         self.correct_count = 0
         self.wrong_questions = []
 
     def check_answer(self, answer: str) -> None:
+        if self.answer_locked:
+            return
+
         is_correct = answer == self.correct_answer
+        self.selected_answer = answer
+        self.answer_locked = True
 
         if is_correct:
             self.correct_count += 1
         else:
             self.wrong_questions.append(self.fragen[self.current_question])
 
+        self._apply_answer_feedback(answer)
+        self.page.update()
+
+    def _apply_answer_feedback(self, answer: str) -> None:
+        is_correct = answer == self.correct_answer
+
         for button in self.answer_buttons:
             if button.data == answer:
-                button.style.bgcolor = ft.Colors.GREEN if is_correct else ft.Colors.RED
+                button.style.bgcolor = self.color_success if is_correct else self.color_danger
             elif button.data == self.correct_answer:
-                button.style.bgcolor = ft.Colors.GREEN
+                button.style.bgcolor = self.color_success
             button.disabled = True
 
         if self.next_button:
             self.next_button.disabled = False
 
-        self.page.update()
-
     def next_question(self, e) -> None:
         self.current_question += 1
+        self.selected_answer = None
+        self.answer_locked = False
         self.show_question_page()
 
     def show_result(self) -> None:
@@ -515,16 +686,18 @@ class QuizApp:
         correct = self.correct_count
         wrong = total - correct
         score = round(correct / total * 100, 1) if total > 0 else 0.0
+        side_padding = self._side_padding()
+        compact = self._get_view_mode() == "compact"
 
         self.page.controls.clear()
 
         self.page.controls.append(
             ft.Container(
                 content=ft.Text(
-                    "RESULT",
+                    "Result",
                     size=self._get_text_size(36),
                     weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.WHITE,
+                    color=self.color_text,
                 ),
                 alignment=ft.Alignment.CENTER,
                 padding=ft.Padding.only(
@@ -533,60 +706,70 @@ class QuizApp:
             )
         )
 
-        self.page.controls.append(
+        score_cards = [
             ft.Container(
-                content=ft.Row(
+                content=ft.Column(
                     controls=[
-                        ft.Container(
-                            content=ft.Column(
-                                controls=[
-                                    ft.Text(
-                                        "CORRECT",
-                                        size=self._get_text_size(16),
-                                        color=ft.Colors.WHITE,
-                                    ),
-                                    ft.Text(
-                                        str(correct),
-                                        size=self._get_text_size(48),
-                                        weight=ft.FontWeight.BOLD,
-                                        color=ft.Colors.WHITE,
-                                    ),
-                                ],
-                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                                spacing=self._get_pad(4),
-                            ),
-                            bgcolor=ft.Colors.GREEN,
-                            border_radius=12,
-                            padding=self._get_pad(20),
-                            expand=True,
+                        ft.Text(
+                            "Correct",
+                            size=self._get_text_size(16),
+                            color=self.color_text,
                         ),
-                        ft.Container(
-                            content=ft.Column(
-                                controls=[
-                                    ft.Text(
-                                        "FALSE",
-                                        size=self._get_text_size(16),
-                                        color=ft.Colors.WHITE,
-                                    ),
-                                    ft.Text(
-                                        str(wrong),
-                                        size=self._get_text_size(48),
-                                        weight=ft.FontWeight.BOLD,
-                                        color=ft.Colors.WHITE,
-                                    ),
-                                ],
-                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                                spacing=self._get_pad(4),
-                            ),
-                            bgcolor=ft.Colors.RED,
-                            border_radius=12,
-                            padding=self._get_pad(20),
-                            expand=True,
+                        ft.Text(
+                            str(correct),
+                            size=self._get_text_size(48),
+                            weight=ft.FontWeight.BOLD,
+                            color=self.color_text,
                         ),
                     ],
-                    spacing=self._get_pad(12),
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=self._get_pad(4),
                 ),
-                padding=ft.Padding.symmetric(horizontal=self._get_pad(16)),
+                bgcolor=self.color_success,
+                border_radius=12,
+                padding=self._get_pad(20),
+                expand=not compact,
+            ),
+            ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Text(
+                            "Wrong",
+                            size=self._get_text_size(16),
+                            color=self.color_text,
+                        ),
+                        ft.Text(
+                            str(wrong),
+                            size=self._get_text_size(48),
+                            weight=ft.FontWeight.BOLD,
+                            color=self.color_text,
+                        ),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=self._get_pad(4),
+                ),
+                bgcolor=self.color_danger,
+                border_radius=12,
+                padding=self._get_pad(20),
+                expand=not compact,
+            ),
+        ]
+
+        self.page.controls.append(
+            ft.Container(
+                content=(
+                    ft.Column(
+                        controls=score_cards,
+                        spacing=self._get_pad(10),
+                        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                    )
+                    if compact
+                    else ft.Row(
+                        controls=score_cards,
+                        spacing=self._get_pad(12),
+                    )
+                ),
+                padding=ft.Padding.symmetric(horizontal=self._get_pad(side_padding)),
             )
         )
 
@@ -596,7 +779,7 @@ class QuizApp:
                     f"{score} %",
                     size=self._get_text_size(60),
                     weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.WHITE,
+                    color=self.color_text,
                     text_align=ft.TextAlign.CENTER,
                 ),
                 alignment=ft.Alignment.CENTER,
@@ -605,17 +788,13 @@ class QuizApp:
         )
 
         btn_end = ft.Button(
-            content="BACK HOME",
+            content="Back Home",
             on_click=lambda e: self.show_startpage(),
             height=self._get_pad(55),
-            style=ft.ButtonStyle(
-                text_style=ft.TextStyle(
-                    size=self._get_text_size(20), weight=ft.FontWeight.W_600
-                ),
-                color=ft.Colors.WHITE,
-                bgcolor=ft.Colors.BLUE,
+            style=self.make_button_style(
+                bgcolor=self.color_info,
+                text_size=self._get_text_size(20),
                 padding=ft.Padding.symmetric(vertical=self._get_pad(15)),
-                shape=ft.RoundedRectangleBorder(radius=12),
             ),
         )
 
@@ -624,17 +803,13 @@ class QuizApp:
         if wrong > 0:
             col_controls.append(
                 ft.Button(
-                    content="REPEAT INCORRECT QUESTIONS",
+                    content="Repeat Incorrect Questions",
                     on_click=self.restart_wrong_questions,
                     height=self._get_pad(55),
-                    style=ft.ButtonStyle(
-                        text_style=ft.TextStyle(
-                            size=self._get_text_size(20), weight=ft.FontWeight.W_600
-                        ),
-                        color=ft.Colors.WHITE,
-                        bgcolor=ft.Colors.ORANGE_500,
+                    style=self.make_button_style(
+                        bgcolor=self.color_warning,
+                        text_size=self._get_text_size(20),
                         padding=ft.Padding.symmetric(vertical=self._get_pad(15)),
-                        shape=ft.RoundedRectangleBorder(radius=12),
                     ),
                 )
             )
@@ -652,8 +827,8 @@ class QuizApp:
                             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                         ),
                         padding=ft.Padding.only(
-                            left=self._get_pad(16),
-                            right=self._get_pad(16),
+                            left=self._get_pad(side_padding),
+                            right=self._get_pad(side_padding),
                             bottom=self._get_pad(20),
                         ),
                     ),
@@ -669,6 +844,8 @@ class QuizApp:
         self.wrong_questions = []
         self.current_question = 0
         self.correct_count = 0
+        self.selected_answer = None
+        self.answer_locked = False
         self.show_question_page()
 
     def _back_btn_style(self) -> ft.ButtonStyle:
@@ -677,8 +854,8 @@ class QuizApp:
                 size=self._get_text_size(22),
                 weight=ft.FontWeight.W_800,
             ),
-            color=ft.Colors.WHITE,
-            bgcolor=ft.Colors.BLUE,
+            color=self.color_text,
+            bgcolor=self.color_info,
             padding=ft.Padding.symmetric(
                 horizontal=self._get_pad(18),
                 vertical=self._get_pad(14),
@@ -692,8 +869,8 @@ class QuizApp:
                 size=self._get_text_size(30),
                 weight=ft.FontWeight.W_800,
             ),
-            color=ft.Colors.WHITE,
-            bgcolor=ft.Colors.BLUE,
+            color=self.color_text,
+            bgcolor=self.color_info,
             padding=ft.Padding.symmetric(
                 horizontal=14,
                 vertical=self._get_text_size(17),
@@ -702,57 +879,7 @@ class QuizApp:
         )
 
     def _on_resize(self, e) -> None:
-        if self._current_view == "start":
-            self.show_startpage()
-            return
-        if self._current_view == "result":
-            self.show_result()
-            return
-
-        changed = False
-        if self.next_button:
-            self.next_button.style = self._next_btn_style()
-            changed = True
-        if self._question_text:
-            self._question_text.style.size = self._get_text_size(30)
-            changed = True
-        for ans_text in self._answer_texts:
-            ans_text.size = self._get_text_size(28)
-            changed = True
-        if self._q_container:
-            self._q_container.padding = ft.Padding.only(
-                left=16,
-                top=self._get_pad(25),
-                bottom=self._get_pad(15),
-            )
-            changed = True
-        for c in self._ans_row_containers:
-            c.padding = ft.Padding.symmetric(
-                horizontal=16, vertical=self._get_pad(3)
-            )
-            changed = True
-        if self._next_container:
-            self._next_container.padding = ft.Padding.only(
-                top=self._get_pad(12), right=16
-            )
-            changed = True
-        if self._bottom_container:
-            self._bottom_container.padding = ft.Padding.only(
-                left=20, right=20, bottom=self._get_pad(20)
-            )
-            changed = True
-        if self._back_button:
-            self._back_button.style = self._back_btn_style()
-            changed = True
-        if changed:
-            self.page.padding = ft.Padding.only(top=self._get_pad(20))
-            self.page.update()
-
-    def create_answer_handler(self, answer: str):
-        def handler(e):
-            self.check_answer(answer)
-        return handler
-
+        self._render_current_view()
 
 async def main(page: ft.Page):
     QuizApp(page)
