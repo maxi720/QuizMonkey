@@ -10,7 +10,7 @@ class QuizApp:
     def __init__(self, page: ft.Page):
         self.page = page
 
-        self.page.title = "Quiz App"
+        self.page.title = "SkyMonkey"
         self.page.theme_mode = ft.ThemeMode.DARK
         self.page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
         self.page.padding = ft.Padding.only(top=30)

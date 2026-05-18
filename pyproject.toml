@@ -1,7 +1,7 @@
 [project]
-name = "quiz_app"
+name = "skymonkey"
 version = "0.1.0"
-description = "Quiz App for own quizzes"
+description = "SkyMonkey - a cross-platform custom quiz app"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
@@ -11,7 +11,7 @@ dependencies = [
 
 [tool.flet]
 org = "com.maxdev"
-product = "QuizApp"
+product = "SkyMonkey"
 icon = "src/assets/icon.png"
 
 [tool.flet.app]
@@ -19,4 +19,4 @@ path = "src"
 module = "main"
 
 [tool.flet.ios]
-bundle_id = "com.maxdev.quizapp"
+bundle_id = "com.maxdev.skymonkey"

@@ -34,4 +34,4 @@ Security reports are especially relevant for:
 - Path handling and file storage
 - Input validation and error handling
 
-Thank you for helping keep QuizApp secure.
+Thank you for helping keep SkyMonkey secure.
