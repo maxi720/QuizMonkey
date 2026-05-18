@@ -107,3 +107,8 @@ This repository's MIT license applies to this project's source code.
 
 Dependencies (including Flet) are separate third-party software and keep their
 own licenses.
+
+## Community
+
+- Contribution guide: `CONTRIBUTING.md`
+- Security policy: `SECURITY.md`
