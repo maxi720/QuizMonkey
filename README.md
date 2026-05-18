@@ -1,69 +1,109 @@
-# Quizappv3 app
+# QuizApp
 
-## Run the app
+QuizApp is a cross-platform quiz application built with Flet.
 
-### uv
+You can run the same app as desktop or web, load your own quizzes from CSV,
+play through questions, and review your results (including retrying only the
+incorrect questions).
 
-Run as a desktop app:
+## What the app does
+
+- Lists all available quiz files.
+- Lets you upload and delete quiz CSV files directly in the app.
+- Validates CSV data before a quiz starts.
+- Runs one question at a time with immediate feedback.
+- Shows result statistics (correct/wrong + score in percent).
+- Supports "repeat incorrect questions" for focused practice.
+
+## Tech stack
+
+- Python `>=3.11`
+- Flet `0.82.0`
+- Project entry point: `src/main.py`
+
+## Run locally
+
+Install dependencies with `uv` and run:
 
 ```bash
 uv run flet run
 ```
 
-Run as a web app:
+Run web mode:
 
 ```bash
 uv run flet run --web
 ```
 
-For more details on running the app, refer to the [Getting Started Guide](https://docs.flet.dev/).
+## Build targets
 
-## Build the app
-
-### Android
+Use `flet build` for packaging:
 
 ```bash
-flet build apk -v
+flet build apk -v      # Android
+flet build ipa -v      # iOS
+flet build macos -v    # macOS
+flet build linux -v    # Linux
+flet build windows -v  # Windows
+flet build web -v      # Web
 ```
 
-For more details on building and signing `.apk` or `.aab`, refer to the [Android Packaging Guide](https://docs.flet.dev/publish/android/).
+Flet packaging docs: <https://docs.flet.dev/publish/>
 
-### iOS
+## Quiz CSV format
 
-```bash
-flet build ipa -v
+Quiz files are loaded from:
+
+- `src/quizzes/` during local development
+- `$FLET_APP_STORAGE_DATA/quizzes/` in packaged app environments
+
+Each row must follow exactly this schema:
+
+```text
+question;answer1;answer2;answer3;answer4;correctAnswer
 ```
 
-For more details on building and signing `.ipa`, refer to the [iOS Packaging Guide](https://docs.flet.dev/publish/ios/).
+Rules:
 
-### macOS
+- Delimiter is `;` (semicolon), not comma.
+- No header row.
+- Exactly 6 fields per row.
+- At least 2 non-empty answer options are required.
+- Empty answer cells are allowed for shorter multiple choice sets.
+- `correctAnswer` must exactly match one of `answer1..answer4`
+  (case- and whitespace-sensitive).
+- File must be UTF-8 encoded.
 
-```bash
-flet build macos -v
+Example:
+
+```text
+What is the capital city of Austria?;Vienna;Salzburg;Innsbruck;Dresden;Vienna
 ```
 
-For more details on building macOS package, refer to the [macOS Packaging Guide](https://docs.flet.dev/publish/macos/).
+## Repository structure
 
-### Linux
-
-```bash
-flet build linux -v
+```text
+src/
+  main.py
+  quizzes/
+    myFirstQuiz.csv
+    Weltgeographie.csv
+    Wirtschaft_Grundlagen.csv
+  assets/
+README.md
+LICENSE
+pyproject.toml
 ```
 
-For more details on building Linux package, refer to the [Linux Packaging Guide](https://docs.flet.dev/publish/linux/).
+## License
 
-### Windows
+This project is licensed under the MIT License.
 
-```bash
-flet build windows -v
-```
+See `LICENSE` for the full text.
 
-For more details on building Windows package, refer to the [Windows Packaging Guide](https://docs.flet.dev/publish/windows/).
+## Third-party licenses
 
-### Web
+This repository's MIT license applies to this project's source code.
 
-```bash
-flet build web -v
-```
-
-For more details on building Web app, refer to the [Web Packaging Guide](https://docs.flet.dev/publish/web/).
+Dependencies (including Flet) are separate third-party software and keep their
+own licenses.

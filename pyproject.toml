@@ -3,6 +3,7 @@ name = "quiz_app"
 version = "0.1.0"
 description = "Quiz App for own quizzes"
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
 dependencies = [
     "flet==0.82.0"
