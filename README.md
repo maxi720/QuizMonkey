@@ -1,6 +1,8 @@
 # SkyMonkey
 
-![SkyMonkey Logo](src/assets/icon.png)
+<p align="center">
+  <img src="src/assets/icon.png" alt="SkyMonkey Logo" width="512" />
+</p>
 
 SkyMonkey is a cross-platform quiz application built with Flet.
 
