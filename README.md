@@ -1,5 +1,7 @@
 # SkyMonkey
 
+![SkyMonkey Logo](src/assets/icon.png)
+
 SkyMonkey is a cross-platform quiz application built with Flet.
 
 You can run the same app as desktop or web, load your own quizzes from CSV,
