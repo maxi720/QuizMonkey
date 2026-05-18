@@ -90,6 +90,8 @@ src/
     Weltgeographie.csv
     Wirtschaft_Grundlagen.csv
   assets/
+    icon.png
+    splash_android.png
 README.md
 LICENSE
 pyproject.toml

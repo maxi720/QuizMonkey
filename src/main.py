@@ -25,6 +25,7 @@ class QuizApp:
         self.color_warning = "#EA580C"
         self.color_answer = "#334155"
         self.color_answer_border = "#64748B"
+        self.logo_src = "assets/icon.png"
         self.page.bgcolor = self.color_bg
 
         platform = self.page.platform
@@ -99,6 +100,26 @@ class QuizApp:
 
     def _get_pad(self, base: int) -> int:
         return max(2, int(base * self._get_scale()))
+
+    def _logo(self, base_size: int = 120) -> ft.Container:
+        mode = self._get_view_mode()
+        size = base_size
+        if mode == "compact":
+            size = int(base_size * 0.68)
+        elif mode == "medium":
+            size = int(base_size * 0.82)
+
+        logo_size = self._get_pad(size)
+        return ft.Container(
+            content=ft.Image(
+                src=self.logo_src,
+                width=logo_size,
+                height=logo_size,
+                fit=ft.ImageFit.CONTAIN,
+            ),
+            alignment=ft.Alignment.CENTER,
+            padding=ft.Padding.only(top=self._get_pad(8), bottom=self._get_pad(8)),
+        )
 
     def make_button_style(
         self,
@@ -289,7 +310,7 @@ class QuizApp:
 
         self.page.controls.append(
             ft.Column(
-                controls=[header, quiz_list, action_buttons],
+                controls=[self._logo(140), header, quiz_list, action_buttons],
                 expand=True,
                 spacing=0,
             )
@@ -457,6 +478,7 @@ class QuizApp:
                         ft.Container(
                             content=ft.Column(
                                 controls=[
+                                    self._logo(120),
                                     ft.Text(
                                         "FILE ERROR!",
                                         size=self._get_text_size(40),
@@ -597,6 +619,7 @@ class QuizApp:
         self.page.controls.append(
             ft.Column(
                 controls=[
+                    self._logo(96),
                     q_container,
                     *answer_containers,
                     next_container,
@@ -705,6 +728,8 @@ class QuizApp:
                 ),
             )
         )
+
+        self.page.controls.append(self._logo(120))
 
         score_cards = [
             ft.Container(
