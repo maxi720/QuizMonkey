@@ -45,7 +45,12 @@ class QuizApp:
                 os.path.dirname(os.path.abspath(__file__)), "quizzes"
             )
 
+        self.default_quiz_folder = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "quizzes"
+        )
+
         os.makedirs(self.quiz_folder, exist_ok=True)
+        self._ensure_default_quizzes()
 
         self.fragen: list[list[str]] = []
         self.current_question = 0
@@ -184,6 +189,22 @@ class QuizApp:
             for entry in quiz_path.iterdir()
             if entry.is_file() and entry.suffix.lower() == ".csv"
         )
+
+    def _ensure_default_quizzes(self) -> None:
+        source_dir = Path(self.default_quiz_folder)
+        target_dir = Path(self.quiz_folder)
+
+        if source_dir == target_dir or not source_dir.exists():
+            return
+
+        for source_file in source_dir.glob("*.csv"):
+            target_file = target_dir / source_file.name
+            if target_file.exists():
+                continue
+            try:
+                shutil.copy(source_file, target_file)
+            except OSError:
+                continue
 
     def _parse_quiz_text(self, quiz_text: str) -> tuple[list[list[str]], list[str]]:
         reader = csv.reader(io.StringIO(quiz_text), delimiter=";")
