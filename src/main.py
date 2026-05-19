@@ -1,4 +1,5 @@
 import csv
+import io
 import os
 import shutil
 from pathlib import Path
@@ -62,6 +63,15 @@ class QuizApp:
 
         self.page.on_resize = self._on_resize
         self._current_view = "start"
+        self._layout_cache: dict[str, float | int | str] = {
+            "width": 0,
+            "height": 0,
+            "scale": 1.0,
+            "mode": "medium",
+        }
+        self._last_resize_signature: tuple[int, int, str] | None = None
+
+        self._refresh_layout_cache(force=True)
 
         self.show_startpage()
 
@@ -75,17 +85,37 @@ class QuizApp:
         self.page.update()
 
     def _get_scale(self) -> float:
-        width = self.page.width or 600
-        height = self.page.height or 800
-        return max(0.5, min(1.5, min(width / 600, height / 750)))
+        self._refresh_layout_cache()
+        return float(self._layout_cache["scale"])
 
     def _get_view_mode(self) -> str:
-        width = self.page.width or 600
+        self._refresh_layout_cache()
+        return str(self._layout_cache["mode"])
+
+    def _refresh_layout_cache(self, force: bool = False) -> None:
+        width = int(self.page.width or 600)
+        height = int(self.page.height or 800)
+
+        cached_width = int(self._layout_cache["width"])
+        cached_height = int(self._layout_cache["height"])
+
+        if not force and width == cached_width and height == cached_height:
+            return
+
         if width < 520:
-            return "compact"
-        if width < 880:
-            return "medium"
-        return "expanded"
+            mode = "compact"
+        elif width < 880:
+            mode = "medium"
+        else:
+            mode = "expanded"
+
+        scale = max(0.5, min(1.5, min(width / 600, height / 750)))
+        self._layout_cache = {
+            "width": width,
+            "height": height,
+            "scale": scale,
+            "mode": mode,
+        }
 
     def _side_padding(self) -> int:
         mode = self._get_view_mode()
@@ -139,12 +169,25 @@ class QuizApp:
         )
 
     def _render_current_view(self) -> None:
+        self._refresh_layout_cache(force=True)
         if self._current_view == "start":
             self.show_startpage()
         elif self._current_view == "result":
             self.show_result()
         elif self._current_view == "question":
             self.show_question_page()
+
+    def _list_quiz_files(self) -> list[str]:
+        quiz_path = Path(self.quiz_folder)
+        return sorted(
+            entry.name
+            for entry in quiz_path.iterdir()
+            if entry.is_file() and entry.suffix.lower() == ".csv"
+        )
+
+    def _parse_quiz_text(self, quiz_text: str) -> tuple[list[list[str]], list[str]]:
+        reader = csv.reader(io.StringIO(quiz_text), delimiter=";")
+        return self._parse_quiz_rows(reader)
 
     def _get_quiz_destination(self, original_filename: str) -> str:
         safe_name = os.path.basename(original_filename)
@@ -220,6 +263,7 @@ class QuizApp:
 
     def show_startpage(self) -> None:
         self._current_view = "start"
+        self._refresh_layout_cache(force=True)
         self.page.controls.clear()
         self.next_button = None
         self.selected_answer = None
@@ -322,39 +366,38 @@ class QuizApp:
         side_padding = self._side_padding()
 
         try:
-            files = sorted(os.listdir(self.quiz_folder))
+            files = self._list_quiz_files()
         except OSError:
             return
 
         for file_name in files:
-            if file_name.lower().endswith(".csv"):
-                filepath = os.path.join(self.quiz_folder, file_name)
-                button_text = os.path.splitext(file_name)[0]
+            filepath = str(Path(self.quiz_folder) / file_name)
+            button_text = Path(file_name).stem
 
-                quiz_button = ft.Button(
-                    content=button_text,
-                    data=filepath,
-                    expand=True,
-                    on_click=lambda e, f=filepath: self.start_quiz(f),
-                    style=self.make_button_style(
-                        self.color_primary,
-                        text_size=self._get_text_size(18),
-                        padding=ft.Padding.symmetric(
-                            horizontal=self._get_pad(12),
-                            vertical=self._get_pad(12),
-                        ),
+            quiz_button = ft.Button(
+                content=button_text,
+                data=filepath,
+                expand=True,
+                on_click=lambda e, f=filepath: self.start_quiz(f),
+                style=self.make_button_style(
+                    self.color_primary,
+                    text_size=self._get_text_size(18),
+                    padding=ft.Padding.symmetric(
+                        horizontal=self._get_pad(12),
+                        vertical=self._get_pad(12),
+                    ),
+                ),
+            )
+
+            self.quiz_buttons.append(
+                ft.Container(
+                    content=ft.Row([quiz_button]),
+                    padding=ft.Padding.symmetric(
+                        horizontal=self._get_pad(side_padding),
+                        vertical=self._get_pad(4),
                     ),
                 )
-
-                self.quiz_buttons.append(
-                    ft.Container(
-                        content=ft.Row([quiz_button]),
-                        padding=ft.Padding.symmetric(
-                            horizontal=self._get_pad(side_padding),
-                            vertical=self._get_pad(4),
-                        ),
-                    )
-                )
+            )
 
     async def upload_csv(self, e) -> None:
         try:
@@ -379,36 +422,42 @@ class QuizApp:
             destination = self._get_quiz_destination(original_filename)
 
             if file_path:
-                shutil.copy(file_path, destination)
+                quiz_text = Path(file_path).read_text(encoding="utf-8")
             elif selected_file.bytes is not None:
-                with open(destination, "wb") as target_file:
-                    target_file.write(selected_file.bytes)
+                quiz_text = selected_file.bytes.decode("utf-8")
             else:
                 self.show_message("Fehler: Kein Zugriff auf Dateiinhalt.")
                 return
 
-            self.load_questions(destination, show_errors=True)
-            if not self.fragen:
-                try:
-                    os.remove(destination)
-                except OSError:
-                    pass
+            questions, errors = self._parse_quiz_text(quiz_text)
+            if errors:
+                self._show_validation_errors(errors)
                 return
+
+            if file_path:
+                shutil.copy(file_path, destination)
+            else:
+                Path(destination).write_text(quiz_text, encoding="utf-8")
+
+            self.fragen = questions
+            self.current_question = 0
+            self.correct_count = 0
+            self.wrong_questions = []
+            self.selected_answer = None
+            self.answer_locked = False
 
             uploaded_name = os.path.basename(destination)
             self.show_message(f"Quiz '{uploaded_name}' hochgeladen!")
             self.show_startpage()
 
+        except UnicodeDecodeError:
+            self.show_message("Dateifehler: Datei ist nicht UTF-8 kodiert.")
         except Exception as ex:
             self.show_message(f"Fehler beim Hochladen: {ex}")
 
     def remove_csv(self, e) -> None:
         try:
-            files = [
-                file_name
-                for file_name in os.listdir(self.quiz_folder)
-                if file_name.lower().endswith(".csv")
-            ]
+            files = self._list_quiz_files()
         except OSError as ex:
             self.show_message(f"Fehler beim Lesen des Quiz-Ordners: {ex}")
             return
@@ -461,9 +510,9 @@ class QuizApp:
 
     def show_question_page(self) -> None:
         self._current_view = "question"
+        self._refresh_layout_cache(force=True)
         self.page.controls.clear()
         side_padding = self._side_padding()
-        compact = self._get_view_mode() == "compact"
 
         if self.current_question >= len(self.fragen):
             self.show_result()
@@ -585,7 +634,11 @@ class QuizApp:
 
         next_container = ft.Container(
             content=self.next_button,
-            padding=ft.Padding.only(top=self._get_pad(12), right=self._get_pad(side_padding)),
+            padding=ft.Padding.only(
+                top=self._get_pad(10),
+                right=self._get_pad(side_padding),
+                bottom=self._get_pad(6),
+            ),
             alignment=ft.Alignment.CENTER_RIGHT,
         )
 
@@ -616,16 +669,25 @@ class QuizApp:
 
         self.page.padding = ft.Padding.only(top=self._get_pad(20))
 
+        question_content = ft.Column(
+            controls=[
+                self._logo(96),
+                q_container,
+                *answer_containers,
+            ],
+            expand=True,
+            spacing=0,
+            scroll=ft.ScrollMode.ADAPTIVE,
+        )
+
+        bottom_actions = ft.Column(
+            controls=[next_container, bottom_container],
+            spacing=0,
+        )
+
         self.page.controls.append(
             ft.Column(
-                controls=[
-                    self._logo(96),
-                    q_container,
-                    *answer_containers,
-                    next_container,
-                    ft.Container(expand=not compact),
-                    bottom_container,
-                ],
+                controls=[question_content, bottom_actions],
                 expand=True,
                 spacing=0,
             )
@@ -705,6 +767,7 @@ class QuizApp:
 
     def show_result(self) -> None:
         self._current_view = "result"
+        self._refresh_layout_cache(force=True)
         total = len(self.fragen)
         correct = self.correct_count
         wrong = total - correct
@@ -897,13 +960,21 @@ class QuizApp:
             color=self.color_text,
             bgcolor=self.color_info,
             padding=ft.Padding.symmetric(
-                horizontal=14,
+                horizontal=self._get_pad(14),
                 vertical=self._get_text_size(17),
             ),
             shape=ft.RoundedRectangleBorder(radius=15),
         )
 
     def _on_resize(self, e) -> None:
+        width = int(self.page.width or 600)
+        height = int(self.page.height or 800)
+        signature = (width // 16, height // 16, self._current_view)
+
+        if signature == self._last_resize_signature:
+            return
+
+        self._last_resize_signature = signature
         self._render_current_view()
 
 async def main(page: ft.Page):
