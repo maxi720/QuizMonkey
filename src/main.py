@@ -26,7 +26,7 @@ class QuizApp:
         self.color_warning = "#EA580C"
         self.color_answer = "#334155"
         self.color_answer_border = "#64748B"
-        self.logo_src = "assets/icon.png"
+        self.logo_src = "icon.png"
         self.page.bgcolor = self.color_bg
 
         platform = self.page.platform
@@ -151,6 +151,7 @@ class QuizApp:
                 width=logo_size,
                 height=logo_size,
                 fit=ft.ImageFit.CONTAIN,
+                error_content=ft.Container(width=logo_size, height=logo_size),
             ),
             alignment=ft.Alignment.CENTER,
             padding=ft.Padding.only(top=self._get_pad(8), bottom=self._get_pad(8)),
@@ -999,7 +1000,29 @@ class QuizApp:
         self._render_current_view()
 
 async def main(page: ft.Page):
-    QuizApp(page)
+    try:
+        QuizApp(page)
+    except Exception as ex:
+        # Surface startup failures instead of leaving a black screen (e.g. on TestFlight).
+        import traceback
+
+        page.controls.clear()
+        page.controls.append(
+            ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Text("Startup error", size=24, color="#DC2626"),
+                        ft.Text(f"{type(ex).__name__}: {ex}", selectable=True),
+                        ft.Text(traceback.format_exc(), size=10, selectable=True),
+                    ],
+                    scroll=ft.ScrollMode.ADAPTIVE,
+                ),
+                padding=20,
+                expand=True,
+            )
+        )
+        page.update()
+        return
 
     if not page.web and page.platform is not None and not page.platform.is_mobile():
         try:
