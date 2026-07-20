@@ -150,7 +150,7 @@ class QuizApp:
                 src=self.logo_src,
                 width=logo_size,
                 height=logo_size,
-                fit=ft.ImageFit.CONTAIN,
+                fit=ft.BoxFit.CONTAIN,
                 error_content=ft.Container(width=logo_size, height=logo_size),
             ),
             alignment=ft.Alignment.CENTER,
