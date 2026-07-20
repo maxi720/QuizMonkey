@@ -1,7 +1,7 @@
 [project]
-name = "skymonkey"
+name = "monkeyquiz"
 version = "0.1.0"
-description = "SkyMonkey - a cross-platform custom quiz app"
+description = "MonkeyQuiz - a cross-platform custom quiz app"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
@@ -11,7 +11,7 @@ dependencies = [
 
 [tool.flet]
 org = "com.maxdev"
-product = "SkyMonkey"
+product = "MonkeyQuiz"
 icon = "src/assets/icon.png"
 
 [tool.flet.app]
@@ -19,4 +19,13 @@ path = "src"
 module = "main"
 
 [tool.flet.ios]
-bundle_id = "com.maxdev.skymonkey"
+bundle_id = "com.maxdev.monkeyquiz"
+team_id = "W45DGNPZ4Q"
+provisioning_profile = "MonkeyQuiz AppStore"
+signing_certificate = "Apple Distribution: MAXIMILIAN GELDNER (W45DGNPZ4Q)"
+export_method = "app-store"
+
+[tool.flet.ios.info]
+NSLocationWhenInUseUsageDescription = "Wird derzeit nicht verwendet."
+NSPhotoLibraryUsageDescription = "Wird derzeit nicht verwendet."
+NSCameraUsageDescription = "Wird derzeit nicht verwendet."
