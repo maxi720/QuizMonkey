@@ -12,9 +12,12 @@ class QuizApp:
         self.page = page
 
         self.page.title = "SkyMonkey"
+        # Self-hosted font bundled in assets — no runtime fetch from Google
+        # Fonts servers, so no user IP is leaked (GDPR/DSGVO compliant).
+        self.page.fonts = {"Fredoka": "fonts/Fredoka.ttf"}
         self.page.theme_mode = ft.ThemeMode.DARK
         self.page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
-        self.page.padding = ft.Padding.only(top=30)
+        self.page.padding = 0
 
         self.color_bg = "#0F172A"
         self.color_text = "#F8FAFC"
@@ -164,15 +167,33 @@ class QuizApp:
         radius=12,
         padding=None,
         side=None,
+        weight=ft.FontWeight.W_600,
+        font_family=None,
     ) -> ft.ButtonStyle:
         return ft.ButtonStyle(
-            text_style=ft.TextStyle(size=text_size, weight=ft.FontWeight.W_600),
+            text_style=ft.TextStyle(
+                size=text_size, weight=weight, font_family=font_family
+            ),
             color=self.color_text,
             bgcolor=bgcolor,
             padding=padding,
             shape=ft.RoundedRectangleBorder(radius=radius),
             side=side,
         )
+
+    def _fit_action_button(
+        self, button_width: float, label_len: int = 6
+    ) -> tuple[int, int]:
+        """Return the largest bold font size whose label fits inside a button
+        of the given width (leaving a little horizontal breathing room), plus a
+        matching button height."""
+        side_margin = button_width * 0.16  # "ein wenig Seitenabstand"
+        usable = max(1.0, button_width - 2 * side_margin)
+        char_factor = 0.60  # approx. em-width per bold character
+        fit = int(usable / (label_len * char_factor))
+        text_size = max(14, min(fit, self._get_text_size(34)))
+        height = int(text_size * 2.1)
+        return text_size, height
 
     def _render_current_view(self) -> None:
         self._refresh_layout_cache(force=True)
@@ -182,6 +203,22 @@ class QuizApp:
             self.show_result()
         elif self._current_view == "question":
             self.show_question_page()
+
+    def _set_root(self, *controls: ft.Control) -> None:
+        """Mount a view inside a SafeArea so content never overlaps the
+        notch/dynamic island at the top or the home indicator at the bottom."""
+        self.page.controls.clear()
+        self.page.controls.append(
+            ft.SafeArea(
+                content=ft.Column(
+                    controls=list(controls),
+                    expand=True,
+                    spacing=0,
+                    horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                ),
+                expand=True,
+            )
+        )
 
     def _list_quiz_files(self) -> list[str]:
         quiz_path = Path(self.quiz_folder)
@@ -286,101 +323,94 @@ class QuizApp:
     def show_startpage(self) -> None:
         self._current_view = "start"
         self._refresh_layout_cache(force=True)
-        self.page.controls.clear()
         self.next_button = None
         self.selected_answer = None
         self.answer_locked = False
         self.load_custom_quizzes()
 
         side_padding = self._side_padding()
-        compact = self._get_view_mode() == "compact"
+        page_w = int(self.page.width or 600)
+        page_h = int(self.page.height or 800)
 
+        # Heading: "monkeyquiz" wordmark in the bundled Fredoka display font.
         header = ft.Container(
             content=ft.Text(
-                "Choose a Quiz",
-                size=self._get_text_size(40),
+                "MonkeyQuiz",
+                font_family="Fredoka",
+                size=self._get_text_size(48),
                 weight=ft.FontWeight.BOLD,
                 color=self.color_text,
             ),
-            padding=ft.Padding.only(top=self._get_pad(30), bottom=self._get_pad(10)),
+            padding=ft.Padding.only(top=self._get_pad(16), bottom=self._get_pad(12)),
             alignment=ft.Alignment.CENTER,
         )
 
-        quiz_list = ft.Column(
+        # Quiz area: a large logo watermark centred behind a scrollable list of
+        # quizzes. When more quizzes are uploaded than fit on screen, the list
+        # scrolls while the logo stays centred in the same window.
+        logo_bg_size = int(min(page_w, page_h) * 0.7)
+        background_logo = ft.Container(
+            content=ft.Image(
+                src="logo_watermark.png",
+                width=logo_bg_size,
+                height=logo_bg_size,
+                fit=ft.BoxFit.CONTAIN,
+                opacity=0.22,
+                error_content=ft.Container(),
+            ),
+            alignment=ft.Alignment.CENTER,
+            expand=True,
+        )
+        quiz_scroll = ft.Column(
             controls=self.quiz_buttons,
-            scroll=ft.ScrollMode.ADAPTIVE,
+            scroll=ft.ScrollMode.AUTO,
             expand=True,
             spacing=0,
         )
+        quiz_area = ft.Stack(
+            controls=[background_logo, quiz_scroll],
+            expand=True,
+        )
+
+        # Bottom actions: Upload (left) + Delete (right), always side by side,
+        # equal size, rectangular, with bold text scaled to fit the button.
+        container_pad = self._get_pad(side_padding)
+        btn_spacing = self._get_pad(12)
+        btn_w = max(80.0, (page_w - 2 * container_pad - btn_spacing) / 2)
+        action_text_size, action_height = self._fit_action_button(btn_w)
+
+        def action_btn(label: str, color: str, handler) -> ft.Button:
+            return ft.Button(
+                content=label,
+                on_click=handler,
+                expand=True,
+                height=action_height,
+                style=self.make_button_style(
+                    color,
+                    text_size=action_text_size,
+                    radius=0,
+                    weight=ft.FontWeight.W_800,
+                    padding=ft.Padding.symmetric(horizontal=self._get_pad(6)),
+                ),
+            )
 
         action_buttons = ft.Container(
-            content=(
-                ft.Column(
-                    controls=[
-                        ft.Button(
-                            content="Upload",
-                            on_click=self.upload_csv,
-                            height=self._get_pad(45),
-                            style=self.make_button_style(
-                                self.color_success,
-                                text_size=self._get_text_size(18),
-                            ),
-                        ),
-                        ft.Button(
-                            content="Delete",
-                            on_click=self.remove_csv,
-                            height=self._get_pad(45),
-                            style=self.make_button_style(
-                                self.color_danger,
-                                text_size=self._get_text_size(18),
-                            ),
-                        ),
-                    ],
-                    spacing=self._get_pad(8),
-                    horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-                )
-                if compact
-                else ft.Row(
-                    controls=[
-                        ft.Button(
-                            content="Delete",
-                            on_click=self.remove_csv,
-                            height=self._get_pad(45),
-                            expand=True,
-                            style=self.make_button_style(
-                                self.color_danger,
-                                text_size=self._get_text_size(18),
-                            ),
-                        ),
-                        ft.Button(
-                            content="Upload",
-                            on_click=self.upload_csv,
-                            height=self._get_pad(45),
-                            expand=True,
-                            style=self.make_button_style(
-                                self.color_success,
-                                text_size=self._get_text_size(18),
-                            ),
-                        ),
-                    ],
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                )
+            content=ft.Row(
+                controls=[
+                    action_btn("Upload", self.color_success, self.upload_csv),
+                    action_btn("Delete", self.color_danger, self.remove_csv),
+                ],
+                spacing=btn_spacing,
             ),
             padding=ft.Padding.only(
-                left=self._get_pad(side_padding),
-                right=self._get_pad(side_padding),
+                left=container_pad,
+                right=container_pad,
                 top=self._get_pad(10),
                 bottom=self._get_pad(20),
             ),
         )
 
-        self.page.controls.append(
-            ft.Column(
-                controls=[self._logo(140), header, quiz_list, action_buttons],
-                expand=True,
-                spacing=0,
-            )
-        )
+        self._set_root(header, quiz_area, action_buttons)
         self.page.update()
 
     def load_custom_quizzes(self) -> None:
@@ -403,10 +433,11 @@ class QuizApp:
                 on_click=lambda e, f=filepath: self.start_quiz(f),
                 style=self.make_button_style(
                     self.color_primary,
-                    text_size=self._get_text_size(18),
+                    text_size=self._get_text_size(26),
+                    weight=ft.FontWeight.W_700,
                     padding=ft.Padding.symmetric(
                         horizontal=self._get_pad(12),
-                        vertical=self._get_pad(12),
+                        vertical=self._get_pad(16),
                     ),
                 ),
             )
@@ -533,7 +564,6 @@ class QuizApp:
     def show_question_page(self) -> None:
         self._current_view = "question"
         self._refresh_layout_cache(force=True)
-        self.page.controls.clear()
         side_padding = self._side_padding()
 
         if self.current_question >= len(self.fragen):
@@ -543,38 +573,32 @@ class QuizApp:
         frage_data = self.fragen[self.current_question]
 
         if len(frage_data) != 6:
-            self.page.controls.append(
-                ft.Column(
-                    controls=[
-                        ft.Container(
-                            content=ft.Column(
-                                controls=[
-                                    self._logo(120),
-                                    ft.Text(
-                                        "FILE ERROR!",
-                                        size=self._get_text_size(40),
-                                        color=self.color_danger,
-                                        text_align=ft.TextAlign.CENTER,
-                                    ),
-                                    ft.Button(
-                                        content="Back",
-                                        on_click=lambda e: self.show_startpage(),
-                                        style=self.make_button_style(
-                                            self.color_info,
-                                            text_size=self._get_text_size(30),
-                                            padding=ft.Padding.all(15),
-                                        ),
-                                    ),
-                                ],
-                                alignment=ft.MainAxisAlignment.CENTER,
-                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            self._set_root(
+                ft.Container(
+                    content=ft.Column(
+                        controls=[
+                            self._logo(120),
+                            ft.Text(
+                                "FILE ERROR!",
+                                size=self._get_text_size(40),
+                                color=self.color_danger,
+                                text_align=ft.TextAlign.CENTER,
                             ),
-                            padding=20,
-                            alignment=ft.Alignment.CENTER,
-                            expand=True,
-                        )
-                    ],
-                    alignment=ft.MainAxisAlignment.CENTER,
+                            ft.Button(
+                                content="Back",
+                                on_click=lambda e: self.show_startpage(),
+                                style=self.make_button_style(
+                                    self.color_info,
+                                    text_size=self._get_text_size(30),
+                                    padding=ft.Padding.all(15),
+                                ),
+                            ),
+                        ],
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    padding=20,
+                    alignment=ft.Alignment.CENTER,
                     expand=True,
                 )
             )
@@ -689,8 +713,6 @@ class QuizApp:
             ),
         )
 
-        self.page.padding = ft.Padding.only(top=self._get_pad(20))
-
         question_content = ft.Column(
             controls=[
                 self._logo(96),
@@ -707,13 +729,7 @@ class QuizApp:
             spacing=0,
         )
 
-        self.page.controls.append(
-            ft.Column(
-                controls=[question_content, bottom_actions],
-                expand=True,
-                spacing=0,
-            )
-        )
+        self._set_root(question_content, bottom_actions)
 
         if self.answer_locked and self.selected_answer is not None:
             self._apply_answer_feedback(self.selected_answer)
@@ -797,24 +813,20 @@ class QuizApp:
         side_padding = self._side_padding()
         compact = self._get_view_mode() == "compact"
 
-        self.page.controls.clear()
-
-        self.page.controls.append(
-            ft.Container(
-                content=ft.Text(
-                    "Result",
-                    size=self._get_text_size(36),
-                    weight=ft.FontWeight.BOLD,
-                    color=self.color_text,
-                ),
-                alignment=ft.Alignment.CENTER,
-                padding=ft.Padding.only(
-                    top=self._get_pad(20), bottom=self._get_pad(16)
-                ),
-            )
+        title = ft.Container(
+            content=ft.Text(
+                "Result",
+                size=self._get_text_size(36),
+                weight=ft.FontWeight.BOLD,
+                color=self.color_text,
+            ),
+            alignment=ft.Alignment.CENTER,
+            padding=ft.Padding.only(
+                top=self._get_pad(20), bottom=self._get_pad(16)
+            ),
         )
 
-        self.page.controls.append(self._logo(120))
+        logo = self._logo(120)
 
         score_cards = [
             ft.Container(
@@ -865,36 +877,32 @@ class QuizApp:
             ),
         ]
 
-        self.page.controls.append(
-            ft.Container(
-                content=(
-                    ft.Column(
-                        controls=score_cards,
-                        spacing=self._get_pad(10),
-                        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-                    )
-                    if compact
-                    else ft.Row(
-                        controls=score_cards,
-                        spacing=self._get_pad(12),
-                    )
-                ),
-                padding=ft.Padding.symmetric(horizontal=self._get_pad(side_padding)),
-            )
+        score_row = ft.Container(
+            content=(
+                ft.Column(
+                    controls=score_cards,
+                    spacing=self._get_pad(10),
+                    horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                )
+                if compact
+                else ft.Row(
+                    controls=score_cards,
+                    spacing=self._get_pad(12),
+                )
+            ),
+            padding=ft.Padding.symmetric(horizontal=self._get_pad(side_padding)),
         )
 
-        self.page.controls.append(
-            ft.Container(
-                content=ft.Text(
-                    f"{score} %",
-                    size=self._get_text_size(60),
-                    weight=ft.FontWeight.BOLD,
-                    color=self.color_text,
-                    text_align=ft.TextAlign.CENTER,
-                ),
-                alignment=ft.Alignment.CENTER,
-                padding=ft.Padding.symmetric(vertical=self._get_pad(20)),
-            )
+        score_percent = ft.Container(
+            content=ft.Text(
+                f"{score} %",
+                size=self._get_text_size(60),
+                weight=ft.FontWeight.BOLD,
+                color=self.color_text,
+                text_align=ft.TextAlign.CENTER,
+            ),
+            alignment=ft.Alignment.CENTER,
+            padding=ft.Padding.symmetric(vertical=self._get_pad(20)),
         )
 
         btn_end = ft.Button(
@@ -926,27 +934,26 @@ class QuizApp:
 
         col_controls.append(btn_end)
 
-        self.page.controls.append(
-            ft.Column(
-                controls=[
-                    ft.Container(expand=True),
-                    ft.Container(
-                        content=ft.Column(
-                            controls=col_controls,
-                            spacing=self._get_pad(12),
-                            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-                        ),
-                        padding=ft.Padding.only(
-                            left=self._get_pad(side_padding),
-                            right=self._get_pad(side_padding),
-                            bottom=self._get_pad(20),
-                        ),
+        bottom_actions = ft.Column(
+            controls=[
+                ft.Container(expand=True),
+                ft.Container(
+                    content=ft.Column(
+                        controls=col_controls,
+                        spacing=self._get_pad(12),
+                        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                     ),
-                ],
-                expand=True,
-            )
+                    padding=ft.Padding.only(
+                        left=self._get_pad(side_padding),
+                        right=self._get_pad(side_padding),
+                        bottom=self._get_pad(20),
+                    ),
+                ),
+            ],
+            expand=True,
         )
 
+        self._set_root(title, logo, score_row, score_percent, bottom_actions)
         self.page.update()
 
     def restart_wrong_questions(self, e) -> None:
@@ -1008,16 +1015,19 @@ async def main(page: ft.Page):
 
         page.controls.clear()
         page.controls.append(
-            ft.Container(
-                content=ft.Column(
-                    controls=[
-                        ft.Text("Startup error", size=24, color="#DC2626"),
-                        ft.Text(f"{type(ex).__name__}: {ex}", selectable=True),
-                        ft.Text(traceback.format_exc(), size=10, selectable=True),
-                    ],
-                    scroll=ft.ScrollMode.ADAPTIVE,
+            ft.SafeArea(
+                content=ft.Container(
+                    content=ft.Column(
+                        controls=[
+                            ft.Text("Startup error", size=24, color="#DC2626"),
+                            ft.Text(f"{type(ex).__name__}: {ex}", selectable=True),
+                            ft.Text(traceback.format_exc(), size=10, selectable=True),
+                        ],
+                        scroll=ft.ScrollMode.ADAPTIVE,
+                    ),
+                    padding=20,
+                    expand=True,
                 ),
-                padding=20,
                 expand=True,
             )
         )
