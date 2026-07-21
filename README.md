@@ -6,7 +6,7 @@
 
 SkyMonkey is a cross-platform quiz application built with Flet.
 
-You can run the same app as desktop or web, load your own quizzes from CSV,
+You can run the same app on desktop, mobile or web, load your own quizzes from CSV,
 play through questions, and review your results (including retrying only the
 incorrect questions).
 
@@ -18,6 +18,18 @@ incorrect questions).
 - Runs one question at a time with immediate feedback.
 - Shows result statistics (correct/wrong + score in percent).
 - Supports "repeat incorrect questions" for focused practice.
+- Saves an interrupted quiz so you can resume it later or start over.
+- Has a statistics page showing how often each quiz was completed, with a
+  reset button (behind a confirmation) to clear all counts.
+
+## Saved state
+
+Completion counts and interrupted quiz runs are stored in a `state.json` file
+next to the quiz folder (`$FLET_APP_STORAGE_DATA/state.json` in packaged
+builds, `src/state.json` during local development).
+
+Quizzes finished via "repeat incorrect questions" and quizzes you end early do
+not count toward the statistics.
 
 ## Tech stack
 
@@ -44,12 +56,23 @@ uv run flet run --web
 Use `flet build` for packaging:
 
 ```bash
-flet build apk -v      # Android
-flet build ipa -v      # iOS
-flet build macos -v    # macOS
-flet build linux -v    # Linux
-flet build windows -v  # Windows
-flet build web -v      # Web
+flet build apk -v            # Android
+flet build ipa -v            # iOS
+flet build ios-simulator -v  # iOS Simulator (.app bundle)
+flet build macos -v          # macOS
+flet build linux -v          # Linux
+flet build windows -v        # Windows
+flet build web -v            # Web
+```
+
+To try the app in the iPhone Simulator:
+
+```bash
+xcrun simctl boot "iPhone 16 Pro"
+open -a Simulator
+flet build ios-simulator
+xcrun simctl install booted build/ios-simulator/monkeyquiz.app
+xcrun simctl launch booted com.maxdev.monkeyquiz
 ```
 
 Flet packaging docs: <https://docs.flet.dev/publish/>
@@ -91,8 +114,6 @@ src/
   main.py
   quizzes/
     myFirstQuiz.csv
-    Weltgeographie.csv
-    Wirtschaft_Grundlagen.csv
   assets/
     icon.png
     splash_android.png
