@@ -12,7 +12,7 @@ class QuizApp:
     def __init__(self, page: ft.Page):
         self.page = page
 
-        self.page.title = "SkyMonkey"
+        self.page.title = "QuizMonkey"
         # Self-hosted font bundled in assets — no runtime fetch from Google
         # Fonts servers, so no user IP is leaked (GDPR/DSGVO compliant).
         self.page.fonts = {"Fredoka": "fonts/Fredoka.ttf"}
@@ -442,10 +442,10 @@ class QuizApp:
         page_w = int(self.page.width or 600)
         page_h = int(self.page.height or 800)
 
-        # Heading: "monkeyquiz" wordmark in the bundled Fredoka display font.
+        # Heading: "quizmonkey" wordmark in the bundled Fredoka display font.
         header = ft.Container(
             content=ft.Text(
-                "MonkeyQuiz",
+                "QuizMonkey",
                 font_family="Fredoka",
                 size=self._get_text_size(48),
                 weight=ft.FontWeight.BOLD,

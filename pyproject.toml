@@ -1,7 +1,7 @@
 [project]
-name = "monkeyquiz"
+name = "quizmonkey"
 version = "0.1.1"
-description = "MonkeyQuiz - a cross-platform custom quiz app"
+description = "QuizMonkey - a cross-platform custom quiz app"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
@@ -11,7 +11,7 @@ dependencies = [
 
 [tool.flet]
 org = "com.maxdev"
-product = "MonkeyQuiz"
+product = "QuizMonkey"
 icon = "src/assets/icon.png"
 
 [tool.flet.app]

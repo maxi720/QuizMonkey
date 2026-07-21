@@ -1,10 +1,10 @@
-# SkyMonkey
+# QuizMonkey
 
 <p align="center">
-  <img src="src/assets/icon.png" alt="SkyMonkey Logo" width="512" />
+  <img src="src/assets/icon.png" alt="QuizMonkey Logo" width="512" />
 </p>
 
-SkyMonkey is a cross-platform quiz application built with Flet.
+QuizMonkey is a cross-platform quiz application built with Flet.
 
 You can run the same app on desktop, mobile or web, load your own quizzes from CSV,
 play through questions, and review your results (including retrying only the
@@ -71,7 +71,7 @@ To try the app in the iPhone Simulator:
 xcrun simctl boot "iPhone 16 Pro"
 open -a Simulator
 flet build ios-simulator
-xcrun simctl install booted build/ios-simulator/monkeyquiz.app
+xcrun simctl install booted build/ios-simulator/quizmonkey.app
 xcrun simctl launch booted com.maxdev.monkeyquiz
 ```
 

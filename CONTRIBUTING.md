@@ -1,10 +1,10 @@
 ## Contributing
 
-Thanks for your interest in contributing to SkyMonkey.
+Thanks for your interest in contributing to QuizMonkey.
 
 ### Project scope
 
-- SkyMonkey is a Flet app with a single main code file: `src/main.py`.
+- QuizMonkey is a Flet app with a single main code file: `src/main.py`.
 - Quiz data is CSV-based and follows the format documented in `README.md`.
 
 ### Getting started
