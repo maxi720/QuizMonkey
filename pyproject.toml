@@ -1,6 +1,6 @@
 [project]
 name = "monkeyquiz"
-version = "0.1.0"
+version = "0.1.1"
 description = "MonkeyQuiz - a cross-platform custom quiz app"
 readme = "README.md"
 license = { file = "LICENSE" }

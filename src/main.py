@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import os
 import shutil
 from pathlib import Path
@@ -29,6 +30,7 @@ class QuizApp:
         self.color_warning = "#EA580C"
         self.color_answer = "#334155"
         self.color_answer_border = "#64748B"
+        self.color_stat = "#F59E0B"
         self.logo_src = "icon.png"
         self.page.bgcolor = self.color_bg
 
@@ -55,6 +57,12 @@ class QuizApp:
         os.makedirs(self.quiz_folder, exist_ok=True)
         self._ensure_default_quizzes()
 
+        # Persisted app state (completion stats + in-progress quiz runs) stored
+        # as a JSON file in the app's data directory.
+        state_root = data_dir or os.path.dirname(os.path.abspath(__file__))
+        self.state_file = os.path.join(state_root, "state.json")
+        self.state = self._load_state()
+
         self.fragen: list[list[str]] = []
         self.current_question = 0
         self.correct_answer = ""
@@ -62,6 +70,9 @@ class QuizApp:
         self.selected_answer: str | None = None
         self.answer_locked = False
         self.wrong_questions: list[list[str]] = []
+        # Filename key of the quiz currently being played; None during a
+        # retry-wrong-questions session (those never touch stats/progress).
+        self.active_quiz_key: str | None = None
         self.quiz_buttons: list[ft.Control] = []
         self.answer_buttons: list[ft.Button] = []
         self.next_button: ft.Button | None = None
@@ -86,11 +97,93 @@ class QuizApp:
     def show_message(self, text: str) -> None:
         self.page.show_dialog(
             ft.SnackBar(
-                content=ft.Text(text),
+                content=ft.Text(text, text_align=ft.TextAlign.CENTER),
                 duration=3000,
             )
         )
         self.page.update()
+
+    def _dismiss_dialog(self) -> None:
+        self.page.pop_dialog()
+        self.page.update()
+
+    def _centered_dialog(
+        self, title: str, body: ft.Control, actions: list[ft.Control]
+    ) -> ft.AlertDialog:
+        """Build a modal dialog whose title, body and actions are centred."""
+        return ft.AlertDialog(
+            modal=True,
+            title=ft.Row(
+                controls=[
+                    ft.Text(
+                        title,
+                        weight=ft.FontWeight.BOLD,
+                        text_align=ft.TextAlign.CENTER,
+                    )
+                ],
+                alignment=ft.MainAxisAlignment.CENTER,
+            ),
+            content=ft.Column(
+                controls=[body],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                tight=True,
+                width=self._get_pad(300),
+            ),
+            actions=actions,
+            actions_alignment=ft.MainAxisAlignment.CENTER,
+        )
+
+    # ------------------------------------------------------------------
+    # Persisted state: completion statistics and in-progress quiz runs
+    # ------------------------------------------------------------------
+    def _load_state(self) -> dict:
+        try:
+            with open(self.state_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        data.setdefault("stats", {})
+        data.setdefault("progress", {})
+        return data
+
+    def _save_state(self) -> None:
+        try:
+            with open(self.state_file, "w", encoding="utf-8") as f:
+                json.dump(self.state, f, ensure_ascii=False)
+        except OSError:
+            pass
+
+    def _record_completion(self, quiz_key: str) -> None:
+        stats = self.state["stats"]
+        stats[quiz_key] = int(stats.get(quiz_key, 0)) + 1
+        self._save_state()
+
+    def _get_completion_count(self, quiz_key: str) -> int:
+        return int(self.state["stats"].get(quiz_key, 0))
+
+    def _save_progress(self) -> None:
+        if not self.active_quiz_key:
+            return
+        self.state["progress"][self.active_quiz_key] = {
+            "fragen": self.fragen,
+            "current_question": self.current_question,
+            "correct_count": self.correct_count,
+            "wrong_questions": self.wrong_questions,
+        }
+        self._save_state()
+
+    def _get_progress(self, quiz_key: str) -> dict | None:
+        progress = self.state["progress"].get(quiz_key)
+        if isinstance(progress, dict) and progress.get("fragen"):
+            return progress
+        return None
+
+    def _clear_progress(self, quiz_key: str | None) -> None:
+        if quiz_key and quiz_key in self.state["progress"]:
+            del self.state["progress"][quiz_key]
+            self._save_state()
 
     def _get_scale(self) -> float:
         self._refresh_layout_cache()
@@ -138,6 +231,21 @@ class QuizApp:
 
     def _get_pad(self, base: int) -> int:
         return max(2, int(base * self._get_scale()))
+
+    def _icon_button(
+        self, icon, color, handler, size: int = 52, pad: int = 20, radius: int = 22
+    ) -> ft.Button:
+        """A compact button sized to its (large) icon with rounded corners.
+        Material icons render from the bundled font — no network (DSGVO safe)."""
+        return ft.Button(
+            content=ft.Icon(
+                icon, color=self.color_text, size=self._get_text_size(size)
+            ),
+            on_click=handler,
+            style=self.make_button_style(
+                color, radius=radius, padding=ft.Padding.all(self._get_pad(pad))
+            ),
+        )
 
     def _logo(self, base_size: int = 120) -> ft.Container:
         mode = self._get_view_mode()
@@ -203,6 +311,8 @@ class QuizApp:
             self.show_result()
         elif self._current_view == "question":
             self.show_question_page()
+        elif self._current_view == "statistics":
+            self.show_statistics()
 
     def _set_root(self, *controls: ft.Control) -> None:
         """Mount a view inside a SafeArea so content never overlaps the
@@ -270,26 +380,26 @@ class QuizApp:
         if len(row) != 6:
             return (
                 False,
-                f"Zeile {row_number}: Erwartet 6 Spalten, gefunden {len(row)}.",
+                f"Row {row_number}: Expected 6 columns, found {len(row)}.",
             )
 
         row[0] = row[0].lstrip("\ufeff")
 
         if not row[0].strip():
-            return False, f"Zeile {row_number}: Frage ist leer."
+            return False, f"Row {row_number}: Question is empty."
 
         answers = row[1:5]
         non_empty_answers = [answer for answer in answers if answer != ""]
         if len(non_empty_answers) < 2:
             return (
                 False,
-                f"Zeile {row_number}: Mindestens 2 Antwortoptionen erforderlich.",
+                f"Row {row_number}: At least 2 answer options required.",
             )
 
         if row[5] not in answers:
             return (
                 False,
-                f"Zeile {row_number}: correctAnswer muss exakt einer Antwort entsprechen.",
+                f"Row {row_number}: correctAnswer must exactly match one answer.",
             )
 
         return True, None
@@ -309,16 +419,16 @@ class QuizApp:
                 errors.append(error)
 
         if not questions and not errors:
-            errors.append("Keine Fragen gefunden.")
+            errors.append("No questions found.")
 
         return questions, errors
 
     def _show_validation_errors(self, errors: list[str]) -> None:
         first_error = errors[0]
         if len(errors) > 1:
-            self.show_message(f"Dateifehler ({len(errors)}): {first_error}")
+            self.show_message(f"File error ({len(errors)}): {first_error}")
         else:
-            self.show_message(f"Dateifehler: {first_error}")
+            self.show_message(f"File error: {first_error}")
 
     def show_startpage(self) -> None:
         self._current_view = "start"
@@ -388,19 +498,50 @@ class QuizApp:
                 style=self.make_button_style(
                     color,
                     text_size=action_text_size,
-                    radius=0,
+                    radius=8,  # slightly rounded corners
                     weight=ft.FontWeight.W_800,
                     padding=ft.Padding.symmetric(horizontal=self._get_pad(6)),
                 ),
             )
 
-        action_buttons = ft.Container(
+        # Statistic button sits above the Upload/Delete row (amber accent).
+        stat_button = ft.Button(
             content=ft.Row(
                 controls=[
-                    action_btn("Upload", self.color_success, self.upload_csv),
-                    action_btn("Delete", self.color_danger, self.remove_csv),
+                    ft.Icon(
+                        ft.Icons.BAR_CHART_ROUNDED,
+                        color=self.color_text,
+                        size=action_text_size,
+                    ),
+                    ft.Text(
+                        "Statistic",
+                        weight=ft.FontWeight.W_800,
+                        size=action_text_size,
+                        color=self.color_text,
+                    ),
+                ],
+                alignment=ft.MainAxisAlignment.CENTER,
+                spacing=self._get_pad(8),
+            ),
+            on_click=lambda e: self.show_statistics(),
+            height=action_height,
+            style=self.make_button_style(self.color_stat, radius=8),
+        )
+
+        action_buttons = ft.Container(
+            content=ft.Column(
+                controls=[
+                    stat_button,
+                    ft.Row(
+                        controls=[
+                            action_btn("Upload", self.color_success, self.upload_csv),
+                            action_btn("Delete", self.color_danger, self.remove_csv),
+                        ],
+                        spacing=btn_spacing,
+                    ),
                 ],
                 spacing=btn_spacing,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             ),
             padding=ft.Padding.only(
                 left=container_pad,
@@ -433,11 +574,11 @@ class QuizApp:
                 on_click=lambda e, f=filepath: self.start_quiz(f),
                 style=self.make_button_style(
                     self.color_primary,
-                    text_size=self._get_text_size(26),
+                    text_size=self._get_text_size(31),
                     weight=ft.FontWeight.W_700,
                     padding=ft.Padding.symmetric(
                         horizontal=self._get_pad(12),
-                        vertical=self._get_pad(16),
+                        vertical=self._get_pad(18),
                     ),
                 ),
             )
@@ -451,6 +592,136 @@ class QuizApp:
                     ),
                 )
             )
+
+    def show_statistics(self) -> None:
+        self._current_view = "statistics"
+        self._refresh_layout_cache(force=True)
+        side_padding = self._side_padding()
+        container_pad = self._get_pad(side_padding)
+
+        header = ft.Container(
+            content=ft.Text(
+                "Statistics",
+                font_family="Fredoka",
+                size=self._get_text_size(44),
+                weight=ft.FontWeight.BOLD,
+                color=self.color_text,
+            ),
+            padding=ft.Padding.only(top=self._get_pad(16), bottom=self._get_pad(6)),
+            alignment=ft.Alignment.CENTER,
+        )
+
+        subtitle = ft.Container(
+            content=ft.Text(
+                "How often you've completed each quiz",
+                size=self._get_text_size(16),
+                color=self.color_muted,
+                text_align=ft.TextAlign.CENTER,
+            ),
+            padding=ft.Padding.only(bottom=self._get_pad(10)),
+            alignment=ft.Alignment.CENTER,
+        )
+
+        try:
+            files = self._list_quiz_files()
+        except OSError:
+            files = []
+
+        rows: list[ft.Control] = []
+        if not files:
+            rows.append(
+                ft.Container(
+                    content=ft.Text(
+                        "No quizzes yet.",
+                        size=self._get_text_size(20),
+                        color=self.color_muted,
+                        text_align=ft.TextAlign.CENTER,
+                    ),
+                    alignment=ft.Alignment.CENTER,
+                    padding=self._get_pad(30),
+                )
+            )
+        else:
+            for file_name in files:
+                name = Path(file_name).stem
+                path = str(Path(self.quiz_folder) / file_name)
+                count = self._get_completion_count(file_name)
+                card = ft.Container(
+                    content=ft.Row(
+                        controls=[
+                            ft.Text(
+                                name,
+                                size=self._get_text_size(24),
+                                weight=ft.FontWeight.W_700,
+                                color=self.color_text,
+                                expand=True,
+                            ),
+                            ft.Container(
+                                content=ft.Text(
+                                    f"{count}×",
+                                    size=self._get_text_size(24),
+                                    weight=ft.FontWeight.BOLD,
+                                    color=self.color_text,
+                                ),
+                                bgcolor=self.color_primary,
+                                border_radius=10,
+                                padding=ft.Padding.symmetric(
+                                    horizontal=self._get_pad(14),
+                                    vertical=self._get_pad(6),
+                                ),
+                            ),
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    bgcolor="#1E293B",
+                    border_radius=12,
+                    padding=ft.Padding.symmetric(
+                        horizontal=self._get_pad(16), vertical=self._get_pad(14)
+                    ),
+                    on_click=lambda e, p=path, n=name: self._ask_start_quiz(p, n),
+                )
+                rows.append(
+                    ft.Container(
+                        content=card,
+                        padding=ft.Padding.symmetric(
+                            horizontal=container_pad, vertical=self._get_pad(5)
+                        ),
+                    )
+                )
+
+        stat_list = ft.Column(
+            controls=rows,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+            spacing=0,
+        )
+
+        # Home button styled like the one on the result page: a compact,
+        # rounded icon button, centred.
+        home = ft.Container(
+            content=ft.Row(
+                controls=[
+                    self._icon_button(
+                        ft.Icons.HOME_ROUNDED,
+                        self.color_info,
+                        lambda e: self.show_startpage(),
+                        size=100,
+                        pad=38,
+                        radius=28,
+                    ),
+                ],
+                alignment=ft.MainAxisAlignment.CENTER,
+            ),
+            padding=ft.Padding.only(
+                left=container_pad,
+                right=container_pad,
+                top=self._get_pad(10),
+                bottom=self._get_pad(24),
+            ),
+        )
+
+        self._set_root(header, subtitle, stat_list, home)
+        self.page.update()
 
     async def upload_csv(self, e) -> None:
         try:
@@ -468,7 +739,7 @@ class QuizApp:
             original_filename = selected_file.name or "upload.csv"
 
             if not original_filename.lower().endswith(".csv"):
-                self.show_message("Fehler: Nur CSV-Dateien können hochgeladen werden!")
+                self.show_message("Error: Only CSV files can be uploaded!")
                 return
 
             file_path = getattr(selected_file, "path", None)
@@ -479,7 +750,7 @@ class QuizApp:
             elif selected_file.bytes is not None:
                 quiz_text = selected_file.bytes.decode("utf-8")
             else:
-                self.show_message("Fehler: Kein Zugriff auf Dateiinhalt.")
+                self.show_message("Error: No access to file content.")
                 return
 
             questions, errors = self._parse_quiz_text(quiz_text)
@@ -500,23 +771,23 @@ class QuizApp:
             self.answer_locked = False
 
             uploaded_name = os.path.basename(destination)
-            self.show_message(f"Quiz '{uploaded_name}' hochgeladen!")
+            self.show_message(f"Quiz '{uploaded_name}' uploaded!")
             self.show_startpage()
 
         except UnicodeDecodeError:
-            self.show_message("Dateifehler: Datei ist nicht UTF-8 kodiert.")
+            self.show_message("File error: File is not UTF-8 encoded.")
         except Exception as ex:
-            self.show_message(f"Fehler beim Hochladen: {ex}")
+            self.show_message(f"Upload error: {ex}")
 
     def remove_csv(self, e) -> None:
         try:
             files = self._list_quiz_files()
         except OSError as ex:
-            self.show_message(f"Fehler beim Lesen des Quiz-Ordners: {ex}")
+            self.show_message(f"Error reading the quiz folder: {ex}")
             return
 
         if not files:
-            self.show_message("Keine Quizdaten vorhanden.")
+            self.show_message("No quizzes available.")
             return
 
         dropdown = ft.Dropdown(
@@ -527,39 +798,142 @@ class QuizApp:
         def confirm_remove(_):
             selected_file = dropdown.value
             if not selected_file:
-                self.show_message("Bitte eine Datei auswählen.")
+                self.show_message("Please select a file.")
                 return
 
             try:
                 os.remove(os.path.join(self.quiz_folder, selected_file))
-                self.page.pop_dialog()
-                self.page.update()
-                self.show_message(f"Quiz '{selected_file}' erfolgreich gelöscht.")
+                self._dismiss_dialog()
+                self.show_message(f"Quiz '{selected_file}' deleted successfully.")
                 self.show_startpage()
             except OSError as ex:
-                self.show_message(f"Fehler beim Löschen: {ex}")
+                self.show_message(f"Error deleting: {ex}")
 
-        dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("Quiz löschen"),
-            content=dropdown,
+        dialog = self._centered_dialog(
+            "Delete quiz",
+            dropdown,
             actions=[
-                ft.Button(content="Löschen", on_click=confirm_remove),
-                ft.Button(
-                    content="Abbrechen",
-                    on_click=lambda _: (self.page.pop_dialog(), self.page.update()),
-                ),
+                ft.Button(content="Delete", on_click=confirm_remove),
+                ft.Button(content="Cancel", on_click=lambda _: self._dismiss_dialog()),
             ],
-            actions_alignment=ft.MainAxisAlignment.END,
         )
 
         self.page.show_dialog(dialog)
         self.page.update()
 
+    def _ask_start_quiz(self, filename: str, name: str) -> None:
+        def start(_):
+            self._dismiss_dialog()
+            self.start_quiz(filename)
+
+        dialog = self._centered_dialog(
+            "Start quiz?",
+            ft.Text(
+                f"Do you want to start '{name}'?",
+                text_align=ft.TextAlign.CENTER,
+            ),
+            actions=[
+                ft.Button(content="Start", on_click=start),
+                ft.Button(content="Cancel", on_click=lambda _: self._dismiss_dialog()),
+            ],
+        )
+        self.page.show_dialog(dialog)
+        self.page.update()
+
     def start_quiz(self, filename: str) -> None:
+        quiz_key = os.path.basename(filename)
+        progress = self._get_progress(quiz_key)
+        if progress:
+            self._ask_resume(filename, quiz_key, progress)
+        else:
+            self._begin_quiz(filename, quiz_key)
+
+    def _begin_quiz(self, filename: str, quiz_key: str) -> None:
+        self._clear_progress(quiz_key)
         self.load_questions(filename)
         if self.fragen:
+            self.active_quiz_key = quiz_key
             self.show_question_page()
+
+    def _resume_quiz(self, filename: str, quiz_key: str, progress: dict) -> None:
+        self.fragen = [list(row) for row in progress.get("fragen", [])]
+        if not self.fragen:
+            self._begin_quiz(filename, quiz_key)
+            return
+        self.current_question = int(progress.get("current_question", 0))
+        self.correct_count = int(progress.get("correct_count", 0))
+        self.wrong_questions = [
+            list(row) for row in progress.get("wrong_questions", [])
+        ]
+        self.selected_answer = None
+        self.answer_locked = False
+        if self.current_question >= len(self.fragen):
+            self.current_question = 0
+        self.active_quiz_key = quiz_key
+        self.show_question_page()
+
+    def _ask_resume(self, filename: str, quiz_key: str, progress: dict) -> None:
+        total = len(progress.get("fragen", []))
+        at = min(int(progress.get("current_question", 0)) + 1, total)
+
+        def resume(_):
+            self._dismiss_dialog()
+            self._resume_quiz(filename, quiz_key, progress)
+
+        def restart(_):
+            self._dismiss_dialog()
+            self._begin_quiz(filename, quiz_key)
+
+        dialog = self._centered_dialog(
+            "Resume quiz?",
+            ft.Text(
+                f"You stopped this quiz at question {at}/{total}. "
+                "Do you want to continue or start over?",
+                text_align=ft.TextAlign.CENTER,
+            ),
+            actions=[
+                ft.Button(content="Continue", on_click=resume),
+                ft.Button(content="Start over", on_click=restart),
+            ],
+        )
+        self.page.show_dialog(dialog)
+        self.page.update()
+
+    def _ask_leave_quiz(self, e=None) -> None:
+        def interrupt(_):
+            self._dismiss_dialog()
+            self._save_progress()
+            self._go_home()
+
+        def end(_):
+            self._dismiss_dialog()
+            self._clear_progress(self.active_quiz_key)
+            self._go_home()
+
+        dialog = self._centered_dialog(
+            "Leave quiz",
+            ft.Text(
+                "End the quiz or just pause it? Paused quizzes can be resumed "
+                "later. Ended quizzes don't count toward your statistics.",
+                text_align=ft.TextAlign.CENTER,
+            ),
+            actions=[
+                ft.Button(content="Pause", on_click=interrupt),
+                ft.Button(content="End", on_click=end),
+            ],
+        )
+        self.page.show_dialog(dialog)
+        self.page.update()
+
+    def _go_home(self) -> None:
+        self.active_quiz_key = None
+        self.fragen = []
+        self.current_question = 0
+        self.correct_count = 0
+        self.wrong_questions = []
+        self.selected_answer = None
+        self.answer_locked = False
+        self.show_startpage()
 
     def show_question_page(self) -> None:
         self._current_view = "question"
@@ -604,6 +978,10 @@ class QuizApp:
             )
             self.page.update()
             return
+
+        # Autosave the pre-answer state so an interrupt or app kill can resume
+        # exactly at this (still unanswered) question without double counting.
+        self._save_progress()
 
         self.correct_answer = frage_data[5]
         self.answer_buttons = []
@@ -653,17 +1031,30 @@ class QuizApp:
             style=self._next_btn_style(),
         )
 
-        back_button = ft.Button(
-            content="Home",
-            on_click=lambda e: self.show_startpage(),
-            style=self._back_btn_style(),
+        # House icon replaces the "Home" label (Material icon rendered from the
+        # bundled font — no network request, so DSGVO compliant). Framed with
+        # rounded corners.
+        home_button = ft.Button(
+            content=ft.Icon(
+                ft.Icons.HOME_ROUNDED,
+                color=self.color_text,
+                size=self._get_text_size(40),
+            ),
+            on_click=self._ask_leave_quiz,
+            tooltip="Menu",
+            style=self.make_button_style(
+                self.color_answer,
+                radius=16,
+                side=ft.BorderSide(2, self.color_answer_border),
+                padding=ft.Padding.all(self._get_pad(12)),
+            ),
         )
 
         question_text = ft.Text(
             frage_data[0],
             style=ft.TextStyle(
-                size=self._get_text_size(30),
-                weight=ft.FontWeight.W_600,
+                size=self._get_text_size(40),
+                weight=ft.FontWeight.W_700,
                 color=self.color_text,
             ),
         )
@@ -673,63 +1064,62 @@ class QuizApp:
             alignment=ft.Alignment.TOP_LEFT,
             padding=ft.Padding.only(
                 left=self._get_pad(side_padding),
+                right=self._get_pad(side_padding),
                 top=self._get_pad(25),
                 bottom=self._get_pad(15),
             ),
         )
 
+        # Next button sits directly to the right, under the last answer.
         next_container = ft.Container(
             content=self.next_button,
             padding=ft.Padding.only(
-                top=self._get_pad(10),
+                top=self._get_pad(14),
                 right=self._get_pad(side_padding),
                 bottom=self._get_pad(6),
             ),
             alignment=ft.Alignment.CENTER_RIGHT,
         )
 
+        # Question counter — larger and indented further from the edge.
         progress_text = ft.Text(
             f"{self.current_question + 1}/{len(self.fragen)}",
             style=ft.TextStyle(
-                size=self._get_text_size(22),
-                weight=ft.FontWeight.W_500,
-                color=self.color_muted,
+                size=self._get_text_size(30),
+                weight=ft.FontWeight.W_700,
+                color=self.color_text,
             ),
         )
 
         bottom_container = ft.Container(
             content=ft.Row(
                 controls=[
-                    back_button,
+                    home_button,
                     ft.Container(expand=True),
                     progress_text,
                 ],
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             padding=ft.Padding.only(
-                left=self._get_pad(side_padding),
-                right=self._get_pad(side_padding),
+                left=self._get_pad(side_padding + 14),
+                right=self._get_pad(side_padding + 14),
+                top=self._get_pad(6),
                 bottom=self._get_pad(20),
             ),
         )
 
         question_content = ft.Column(
             controls=[
-                self._logo(96),
                 q_container,
                 *answer_containers,
+                next_container,
             ],
             expand=True,
             spacing=0,
             scroll=ft.ScrollMode.ADAPTIVE,
         )
 
-        bottom_actions = ft.Column(
-            controls=[next_container, bottom_container],
-            spacing=0,
-        )
-
-        self._set_root(question_content, bottom_actions)
+        self._set_root(question_content, bottom_container)
 
         if self.answer_locked and self.selected_answer is not None:
             self._apply_answer_feedback(self.selected_answer)
@@ -751,18 +1141,18 @@ class QuizApp:
                         self._show_validation_errors(errors)
         except FileNotFoundError:
             if show_errors:
-                self.show_message(f"Datei '{filename}' nicht gefunden!")
+                self.show_message(f"File '{filename}' not found!")
         except UnicodeDecodeError:
             if show_errors:
                 self.show_message(
-                    f"Datei '{filename}' hat eine ungültige Zeichenkodierung (kein UTF-8)."
+                    f"File '{filename}' has an invalid encoding (not UTF-8)."
                 )
         except PermissionError:
             if show_errors:
-                self.show_message(f"Keine Leseberechtigung für '{filename}'.")
+                self.show_message(f"No read permission for '{filename}'.")
         except Exception as ex:
             if show_errors:
-                self.show_message(f"Fehler beim Laden der Datei: {ex}")
+                self.show_message(f"Error loading file: {ex}")
 
         self.current_question = 0
         self.correct_count = 0
@@ -804,6 +1194,13 @@ class QuizApp:
         self.show_question_page()
 
     def show_result(self) -> None:
+        # Only a fully finished full quiz counts as completed. Record it once,
+        # then clear the flag so a resize re-render can't double count.
+        if self.active_quiz_key:
+            self._record_completion(self.active_quiz_key)
+            self._clear_progress(self.active_quiz_key)
+            self.active_quiz_key = None
+
         self._current_view = "result"
         self._refresh_layout_cache(force=True)
         total = len(self.fragen)
@@ -811,149 +1208,187 @@ class QuizApp:
         wrong = total - correct
         score = round(correct / total * 100, 1) if total > 0 else 0.0
         side_padding = self._side_padding()
-        compact = self._get_view_mode() == "compact"
+
+        # Percentage colour: green above 80 %, red below, orange at exactly 80 %.
+        if score > 80:
+            pct_color = self.color_success
+        elif score < 80:
+            pct_color = self.color_danger
+        else:
+            pct_color = self.color_warning
 
         title = ft.Container(
             content=ft.Text(
                 "Result",
-                size=self._get_text_size(36),
-                weight=ft.FontWeight.BOLD,
-                color=self.color_text,
-            ),
-            alignment=ft.Alignment.CENTER,
-            padding=ft.Padding.only(
-                top=self._get_pad(20), bottom=self._get_pad(16)
-            ),
-        )
-
-        logo = self._logo(120)
-
-        score_cards = [
-            ft.Container(
-                content=ft.Column(
-                    controls=[
-                        ft.Text(
-                            "Correct",
-                            size=self._get_text_size(16),
-                            color=self.color_text,
-                        ),
-                        ft.Text(
-                            str(correct),
-                            size=self._get_text_size(48),
-                            weight=ft.FontWeight.BOLD,
-                            color=self.color_text,
-                        ),
-                    ],
-                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    spacing=self._get_pad(4),
-                ),
-                bgcolor=self.color_success,
-                border_radius=12,
-                padding=self._get_pad(20),
-                expand=not compact,
-            ),
-            ft.Container(
-                content=ft.Column(
-                    controls=[
-                        ft.Text(
-                            "Wrong",
-                            size=self._get_text_size(16),
-                            color=self.color_text,
-                        ),
-                        ft.Text(
-                            str(wrong),
-                            size=self._get_text_size(48),
-                            weight=ft.FontWeight.BOLD,
-                            color=self.color_text,
-                        ),
-                    ],
-                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    spacing=self._get_pad(4),
-                ),
-                bgcolor=self.color_danger,
-                border_radius=12,
-                padding=self._get_pad(20),
-                expand=not compact,
-            ),
-        ]
-
-        score_row = ft.Container(
-            content=(
-                ft.Column(
-                    controls=score_cards,
-                    spacing=self._get_pad(10),
-                    horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-                )
-                if compact
-                else ft.Row(
-                    controls=score_cards,
-                    spacing=self._get_pad(12),
-                )
-            ),
-            padding=ft.Padding.symmetric(horizontal=self._get_pad(side_padding)),
-        )
-
-        score_percent = ft.Container(
-            content=ft.Text(
-                f"{score} %",
-                size=self._get_text_size(60),
+                size=self._get_text_size(44),
                 weight=ft.FontWeight.BOLD,
                 color=self.color_text,
                 text_align=ft.TextAlign.CENTER,
             ),
             alignment=ft.Alignment.CENTER,
-            padding=ft.Padding.symmetric(vertical=self._get_pad(20)),
-        )
-
-        btn_end = ft.Button(
-            content="Back Home",
-            on_click=lambda e: self.show_startpage(),
-            height=self._get_pad(55),
-            style=self.make_button_style(
-                bgcolor=self.color_info,
-                text_size=self._get_text_size(20),
-                padding=ft.Padding.symmetric(vertical=self._get_pad(15)),
+            padding=ft.Padding.only(
+                top=self._get_pad(16), bottom=self._get_pad(2)
             ),
         )
 
-        col_controls: list[ft.Control] = []
+        # Consistent, pleasant vertical gap reused between sections.
+        gap = self._get_pad(30)
+        page_w = int(self.page.width or 600)
+        page_h = int(self.page.height or 800)
+        landscape = page_w > page_h
 
+        percent = ft.Text(
+            f"{score} %",
+            size=self._get_text_size(88),
+            weight=ft.FontWeight.BOLD,
+            color=pct_color,
+            text_align=ft.TextAlign.CENTER,
+        )
+
+        # Large icon buttons — about twice the previous size. The score boxes
+        # use the exact same square footprint and corner radius.
+        big_icon, big_pad, big_radius = 100, 38, 28
+        box_side = self._get_text_size(big_icon) + 2 * self._get_pad(big_pad)
+
+        def score_card(label: str, value: int, color: str) -> ft.Container:
+            return ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Text(
+                            label,
+                            size=self._get_text_size(22),
+                            weight=ft.FontWeight.W_600,
+                            color=self.color_text,
+                        ),
+                        ft.Text(
+                            str(value),
+                            size=self._get_text_size(56),
+                            weight=ft.FontWeight.BOLD,
+                            color=self.color_text,
+                        ),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=self._get_pad(4),
+                ),
+                width=box_side,
+                height=box_side,
+                bgcolor=color,
+                border_radius=big_radius,
+                alignment=ft.Alignment.CENTER,
+            )
+
+        # Score boxes: same size/format as the Repeat button, centred.
+        score_row = ft.Container(
+            content=ft.Row(
+                controls=[
+                    score_card("Correct", correct, self.color_success),
+                    score_card("Wrong", wrong, self.color_danger),
+                ],
+                alignment=ft.MainAxisAlignment.CENTER,
+                spacing=gap,
+            ),
+            padding=ft.Padding.symmetric(horizontal=self._get_pad(side_padding)),
+        )
+
+        repeat_block: ft.Control | None = None
         if wrong > 0:
-            col_controls.append(
-                ft.Button(
-                    content="Repeat Incorrect Questions",
-                    on_click=self.restart_wrong_questions,
-                    height=self._get_pad(55),
-                    style=self.make_button_style(
-                        bgcolor=self.color_warning,
-                        text_size=self._get_text_size(20),
-                        padding=ft.Padding.symmetric(vertical=self._get_pad(15)),
+            repeat_block = ft.Row(
+                controls=[
+                    self._icon_button(
+                        ft.Icons.REPLAY_ROUNDED,
+                        self.color_warning,
+                        self.restart_wrong_questions,
+                        size=big_icon,
+                        pad=big_pad,
+                        radius=big_radius,
+                    )
+                ],
+                alignment=ft.MainAxisAlignment.CENTER,
+            )
+
+        home_button = self._icon_button(
+            ft.Icons.HOME_ROUNDED,
+            self.color_info,
+            lambda e: self._go_home(),
+            size=big_icon,
+            pad=big_pad,
+            radius=big_radius,
+        )
+
+        if landscape:
+            # Landscape: two columns side by side so everything fits on the
+            # shorter screen — score on the left, action buttons on the right.
+            right_controls: list[ft.Control] = []
+            if repeat_block is not None:
+                right_controls.append(repeat_block)
+            right_controls.append(
+                ft.Row([home_button], alignment=ft.MainAxisAlignment.CENTER)
+            )
+
+            body = ft.Row(
+                controls=[
+                    ft.Column(
+                        controls=[ft.Container(percent, alignment=ft.Alignment.CENTER), score_row],
+                        expand=True,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=gap,
+                        scroll=ft.ScrollMode.AUTO,
                     ),
+                    ft.Column(
+                        controls=right_controls,
+                        expand=True,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=gap,
+                        scroll=ft.ScrollMode.AUTO,
+                    ),
+                ],
+                expand=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+            self._set_root(title, body)
+            self.page.update()
+            return
+
+        # Portrait: title pinned at the top, home button pinned at the bottom,
+        # and the score/repeat block fills the space between — scrolling only if
+        # it would not otherwise fit, so nothing ever overflows off-screen.
+        middle_controls: list[ft.Control] = [
+            ft.Container(
+                content=percent,
+                alignment=ft.Alignment.CENTER,
+                padding=ft.Padding.only(top=self._get_pad(6), bottom=self._get_pad(16)),
+            ),
+            score_row,
+        ]
+        if repeat_block is not None:
+            middle_controls.append(
+                ft.Container(
+                    content=repeat_block,
+                    padding=ft.Padding.only(top=gap),
+                    alignment=ft.Alignment.CENTER,
                 )
             )
 
-        col_controls.append(btn_end)
-
-        bottom_actions = ft.Column(
-            controls=[
-                ft.Container(expand=True),
-                ft.Container(
-                    content=ft.Column(
-                        controls=col_controls,
-                        spacing=self._get_pad(12),
-                        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-                    ),
-                    padding=ft.Padding.only(
-                        left=self._get_pad(side_padding),
-                        right=self._get_pad(side_padding),
-                        bottom=self._get_pad(20),
-                    ),
-                ),
-            ],
+        middle = ft.Column(
+            controls=middle_controls,
             expand=True,
+            scroll=ft.ScrollMode.AUTO,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=0,
         )
 
-        self._set_root(title, logo, score_row, score_percent, bottom_actions)
+        home_bar = ft.Container(
+            content=ft.Row(
+                controls=[home_button],
+                alignment=ft.MainAxisAlignment.CENTER,
+            ),
+            padding=ft.Padding.only(top=self._get_pad(10), bottom=self._get_pad(30)),
+        )
+
+        self._set_root(title, middle, home_bar)
         self.page.update()
 
     def restart_wrong_questions(self, e) -> None:
@@ -963,6 +1398,9 @@ class QuizApp:
         self.correct_count = 0
         self.selected_answer = None
         self.answer_locked = False
+        # A retry-only run is not the full quiz, so it must not be saved as
+        # progress nor counted as a completion.
+        self.active_quiz_key = None
         self.show_question_page()
 
     def _back_btn_style(self) -> ft.ButtonStyle:
@@ -981,18 +1419,20 @@ class QuizApp:
         )
 
     def _next_btn_style(self) -> ft.ButtonStyle:
+        # Large by default; _get_text_size/_get_pad scale it down automatically
+        # on smaller screens so it always fits.
         return ft.ButtonStyle(
             text_style=ft.TextStyle(
-                size=self._get_text_size(30),
+                size=self._get_text_size(42),
                 weight=ft.FontWeight.W_800,
             ),
             color=self.color_text,
             bgcolor=self.color_info,
             padding=ft.Padding.symmetric(
-                horizontal=self._get_pad(14),
-                vertical=self._get_text_size(17),
+                horizontal=self._get_pad(26),
+                vertical=self._get_pad(20),
             ),
-            shape=ft.RoundedRectangleBorder(radius=15),
+            shape=ft.RoundedRectangleBorder(radius=18),
         )
 
     def _on_resize(self, e) -> None:
