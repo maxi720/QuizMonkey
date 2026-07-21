@@ -697,7 +697,8 @@ class QuizApp:
         )
 
         # Home button styled like the one on the result page: a compact,
-        # rounded icon button, centred.
+        # rounded icon button, centred. Next to it a reset button that clears
+        # all completion counts (behind a confirmation).
         home = ft.Container(
             content=ft.Row(
                 controls=[
@@ -709,8 +710,17 @@ class QuizApp:
                         pad=38,
                         radius=28,
                     ),
+                    self._icon_button(
+                        ft.Icons.RESTART_ALT_ROUNDED,
+                        self.color_danger,
+                        lambda e: self._ask_reset_statistics(),
+                        size=100,
+                        pad=38,
+                        radius=28,
+                    ),
                 ],
                 alignment=ft.MainAxisAlignment.CENTER,
+                spacing=self._get_pad(16),
             ),
             padding=ft.Padding.only(
                 left=container_pad,
@@ -722,6 +732,32 @@ class QuizApp:
 
         self._set_root(header, subtitle, stat_list, home)
         self.page.update()
+
+    def _ask_reset_statistics(self) -> None:
+        def reset(_):
+            self._dismiss_dialog()
+            self._reset_statistics()
+
+        dialog = self._centered_dialog(
+            "Reset statistics?",
+            ft.Text(
+                "This will set the completion count of every quiz back to "
+                "zero. This cannot be undone.",
+                text_align=ft.TextAlign.CENTER,
+            ),
+            actions=[
+                ft.Button(content="Reset", on_click=reset),
+                ft.Button(content="Cancel", on_click=lambda _: self._dismiss_dialog()),
+            ],
+        )
+        self.page.show_dialog(dialog)
+        self.page.update()
+
+    def _reset_statistics(self) -> None:
+        self.state["stats"] = {}
+        self._save_state()
+        self.show_statistics()
+        self.show_message("Statistics have been reset.")
 
     async def upload_csv(self, e) -> None:
         try:
