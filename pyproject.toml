@@ -29,3 +29,15 @@ export_method = "app-store"
 NSLocationWhenInUseUsageDescription = "Wird derzeit nicht verwendet."
 NSPhotoLibraryUsageDescription = "Wird derzeit nicht verwendet."
 NSCameraUsageDescription = "Wird derzeit nicht verwendet."
+
+# Makes QuizMonkey show up under "Open in..." in the iOS share sheet for CSV
+# files. iOS then copies the file into Documents/Inbox, which the app scans on
+# launch and on resume. Copy (not in-place) is deliberate: the app owns its
+# quiz files afterwards.
+LSSupportsOpeningDocumentsInPlace = false
+
+[[tool.flet.ios.info.CFBundleDocumentTypes]]
+CFBundleTypeName = "CSV Quiz"
+CFBundleTypeRole = "Editor"
+LSHandlerRank = "Alternate"
+LSItemContentTypes = ["public.comma-separated-values-text", "public.csv"]

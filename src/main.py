@@ -54,6 +54,12 @@ class QuizApp:
             os.path.dirname(os.path.abspath(__file__)), "quizzes"
         )
 
+        # iOS copies files handed to us via "Open in..." / the share sheet into
+        # Documents/Inbox. FLET_APP_STORAGE_DATA *is* the Documents directory,
+        # so Inbox sits right next to the quiz folder.
+        inbox_root = data_dir or os.path.dirname(os.path.abspath(__file__))
+        self.inbox_folder = os.path.join(inbox_root, "Inbox")
+
         os.makedirs(self.quiz_folder, exist_ok=True)
         self._ensure_default_quizzes()
 
@@ -81,6 +87,7 @@ class QuizApp:
         self.page.services.append(self.file_picker)
 
         self.page.on_resize = self._on_resize
+        self.page.on_app_lifecycle_state_change = self._on_lifecycle_change
         self._current_view = "start"
         self._layout_cache: dict[str, float | int | str] = {
             "width": 0,
@@ -92,7 +99,12 @@ class QuizApp:
 
         self._refresh_layout_cache(force=True)
 
+        imported = self._import_from_inbox()
+
         self.show_startpage()
+
+        if imported:
+            self.show_message(self._import_summary(imported))
 
     def show_message(self, text: str) -> None:
         self.page.show_dialog(
@@ -354,6 +366,70 @@ class QuizApp:
             except OSError:
                 continue
 
+    # ------------------------------------------------------------------
+    # Import of quizzes shared into the app from other apps (iOS share sheet)
+    # ------------------------------------------------------------------
+    def _import_from_inbox(self) -> list[str]:
+        """Move valid CSVs that iOS dropped in Documents/Inbox into the quiz
+        folder. Returns the names the files ended up under.
+
+        Invalid files are discarded rather than reported one by one: the
+        import happens on launch, so there is no sensible place to show a
+        per-row validation dialog without hijacking the start page.
+        """
+        inbox = Path(self.inbox_folder)
+        if not inbox.is_dir():
+            return []
+
+        imported: list[str] = []
+        for entry in sorted(inbox.iterdir()):
+            if not entry.is_file() or entry.suffix.lower() != ".csv":
+                continue
+            try:
+                quiz_text = entry.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                self._discard_inbox_file(entry)
+                continue
+
+            _, errors = self._parse_quiz_text(quiz_text)
+            if errors:
+                self._discard_inbox_file(entry)
+                continue
+
+            destination = self._get_quiz_destination(entry.name)
+            try:
+                shutil.move(str(entry), destination)
+            except OSError:
+                self._discard_inbox_file(entry)
+                continue
+            imported.append(os.path.basename(destination))
+
+        return imported
+
+    def _discard_inbox_file(self, entry: Path) -> None:
+        """Drop a file we cannot use, so it is not retried on every launch."""
+        try:
+            entry.unlink()
+        except OSError:
+            pass
+
+    def _import_summary(self, imported: list[str]) -> str:
+        if len(imported) == 1:
+            return f"Quiz '{Path(imported[0]).stem}' imported!"
+        return f"{len(imported)} quizzes imported!"
+
+    def _on_lifecycle_change(self, e) -> None:
+        """Re-check the inbox when the app returns to the foreground, so a
+        share into an already-running app is picked up too."""
+        if e.state != ft.AppLifecycleState.RESUME:
+            return
+        imported = self._import_from_inbox()
+        if not imported:
+            return
+        if self._current_view == "start":
+            self.show_startpage()
+        self.show_message(self._import_summary(imported))
+
     def _parse_quiz_text(self, quiz_text: str) -> tuple[list[list[str]], list[str]]:
         reader = csv.reader(io.StringIO(quiz_text), delimiter=";")
         return self._parse_quiz_rows(reader)
@@ -442,21 +518,8 @@ class QuizApp:
         page_w = int(self.page.width or 600)
         page_h = int(self.page.height or 800)
 
-        # Heading: "quizmonkey" wordmark in the bundled Fredoka display font.
-        header = ft.Container(
-            content=ft.Text(
-                "QuizMonkey",
-                font_family="Fredoka",
-                size=self._get_text_size(48),
-                weight=ft.FontWeight.BOLD,
-                color=self.color_text,
-            ),
-            padding=ft.Padding.only(top=self._get_pad(16), bottom=self._get_pad(12)),
-            alignment=ft.Alignment.CENTER,
-        )
-
         # Quiz area: a large logo watermark centred behind a scrollable list of
-        # quizzes. When more quizzes are uploaded than fit on screen, the list
+        # quizzes. When more quizzes are imported than fit on screen, the list
         # scrolls while the logo stays centred in the same window.
         logo_bg_size = int(min(page_w, page_h) * 0.7)
         background_logo = ft.Container(
@@ -471,18 +534,24 @@ class QuizApp:
             alignment=ft.Alignment.CENTER,
             expand=True,
         )
-        quiz_scroll = ft.Column(
-            controls=self.quiz_buttons,
-            scroll=ft.ScrollMode.AUTO,
+        # Breathing room above the first quiz, now that the wordmark heading is
+        # gone. Padded on the list only, so the watermark stays centred.
+        quiz_scroll = ft.Container(
+            content=ft.Column(
+                controls=self.quiz_buttons,
+                scroll=ft.ScrollMode.AUTO,
+                expand=True,
+                spacing=0,
+            ),
+            padding=ft.Padding.only(top=self._get_pad(28)),
             expand=True,
-            spacing=0,
         )
         quiz_area = ft.Stack(
             controls=[background_logo, quiz_scroll],
             expand=True,
         )
 
-        # Bottom actions: Upload (left) + Delete (right), always side by side,
+        # Bottom actions: Import (left) + Delete (right), always side by side,
         # equal size, rectangular, with bold text scaled to fit the button.
         container_pad = self._get_pad(side_padding)
         btn_spacing = self._get_pad(12)
@@ -504,7 +573,7 @@ class QuizApp:
                 ),
             )
 
-        # Statistic button sits above the Upload/Delete row (amber accent).
+        # Statistic button sits above the Import/Delete row (amber accent).
         stat_button = ft.Button(
             content=ft.Row(
                 controls=[
@@ -534,7 +603,7 @@ class QuizApp:
                     stat_button,
                     ft.Row(
                         controls=[
-                            action_btn("Upload", self.color_success, self.upload_csv),
+                            action_btn("Import", self.color_success, self.upload_csv),
                             action_btn("Delete", self.color_danger, self.remove_csv),
                         ],
                         spacing=btn_spacing,
@@ -551,7 +620,7 @@ class QuizApp:
             ),
         )
 
-        self._set_root(header, quiz_area, action_buttons)
+        self._set_root(quiz_area, action_buttons)
         self.page.update()
 
     def load_custom_quizzes(self) -> None:
@@ -775,7 +844,7 @@ class QuizApp:
             original_filename = selected_file.name or "upload.csv"
 
             if not original_filename.lower().endswith(".csv"):
-                self.show_message("Error: Only CSV files can be uploaded!")
+                self.show_message("Error: Only CSV files can be imported!")
                 return
 
             file_path = getattr(selected_file, "path", None)
@@ -806,14 +875,14 @@ class QuizApp:
             self.selected_answer = None
             self.answer_locked = False
 
-            uploaded_name = os.path.basename(destination)
-            self.show_message(f"Quiz '{uploaded_name}' uploaded!")
+            imported_name = os.path.basename(destination)
+            self.show_message(f"Quiz '{imported_name}' imported!")
             self.show_startpage()
 
         except UnicodeDecodeError:
             self.show_message("File error: File is not UTF-8 encoded.")
         except Exception as ex:
-            self.show_message(f"Upload error: {ex}")
+            self.show_message(f"Import error: {ex}")
 
     def remove_csv(self, e) -> None:
         try:
