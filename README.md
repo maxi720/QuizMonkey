@@ -21,25 +21,6 @@ incorrect questions).
 - Saves an interrupted quiz so you can resume it later or start over.
 - Has a statistics page showing how often each quiz was completed, with a
   reset button (behind a confirmation) to clear all counts.
-- On iOS, accepts CSV files shared from other apps (Files, Mail, ...).
-
-## Importing a quiz from the iOS share sheet
-
-QuizMonkey registers itself as a handler for CSV files, so it shows up under
-"Open in..." in the iOS share sheet. iOS then copies the file into the app's
-`Documents/Inbox/` folder.
-
-The app scans that folder on launch and whenever it returns to the foreground,
-validates each CSV, and moves valid ones into the quiz folder. Files that fail
-validation are discarded so they are not retried on every launch.
-
-Two limitations worth knowing:
-
-- The quiz appears in the normal start page list; there is no dedicated import
-  dialog opened straight from the share sheet.
-- This is the "Open in..." section of the share sheet, not a true Share
-  Extension (the icon row at the top). A Share Extension would need its own
-  Xcode extension target, which the Flet build pipeline does not generate.
 
 ## Saved state
 

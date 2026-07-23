@@ -54,12 +54,6 @@ class QuizApp:
             os.path.dirname(os.path.abspath(__file__)), "quizzes"
         )
 
-        # iOS copies files handed to us via "Open in..." / the share sheet into
-        # Documents/Inbox. FLET_APP_STORAGE_DATA *is* the Documents directory,
-        # so Inbox sits right next to the quiz folder.
-        inbox_root = data_dir or os.path.dirname(os.path.abspath(__file__))
-        self.inbox_folder = os.path.join(inbox_root, "Inbox")
-
         os.makedirs(self.quiz_folder, exist_ok=True)
         self._ensure_default_quizzes()
 
@@ -87,7 +81,6 @@ class QuizApp:
         self.page.services.append(self.file_picker)
 
         self.page.on_resize = self._on_resize
-        self.page.on_app_lifecycle_state_change = self._on_lifecycle_change
         self._current_view = "start"
         self._layout_cache: dict[str, float | int | str] = {
             "width": 0,
@@ -99,12 +92,7 @@ class QuizApp:
 
         self._refresh_layout_cache(force=True)
 
-        imported = self._import_from_inbox()
-
         self.show_startpage()
-
-        if imported:
-            self.show_message(self._import_summary(imported))
 
     def show_message(self, text: str) -> None:
         self.page.show_dialog(
@@ -365,70 +353,6 @@ class QuizApp:
                 shutil.copy(source_file, target_file)
             except OSError:
                 continue
-
-    # ------------------------------------------------------------------
-    # Import of quizzes shared into the app from other apps (iOS share sheet)
-    # ------------------------------------------------------------------
-    def _import_from_inbox(self) -> list[str]:
-        """Move valid CSVs that iOS dropped in Documents/Inbox into the quiz
-        folder. Returns the names the files ended up under.
-
-        Invalid files are discarded rather than reported one by one: the
-        import happens on launch, so there is no sensible place to show a
-        per-row validation dialog without hijacking the start page.
-        """
-        inbox = Path(self.inbox_folder)
-        if not inbox.is_dir():
-            return []
-
-        imported: list[str] = []
-        for entry in sorted(inbox.iterdir()):
-            if not entry.is_file() or entry.suffix.lower() != ".csv":
-                continue
-            try:
-                quiz_text = entry.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                self._discard_inbox_file(entry)
-                continue
-
-            _, errors = self._parse_quiz_text(quiz_text)
-            if errors:
-                self._discard_inbox_file(entry)
-                continue
-
-            destination = self._get_quiz_destination(entry.name)
-            try:
-                shutil.move(str(entry), destination)
-            except OSError:
-                self._discard_inbox_file(entry)
-                continue
-            imported.append(os.path.basename(destination))
-
-        return imported
-
-    def _discard_inbox_file(self, entry: Path) -> None:
-        """Drop a file we cannot use, so it is not retried on every launch."""
-        try:
-            entry.unlink()
-        except OSError:
-            pass
-
-    def _import_summary(self, imported: list[str]) -> str:
-        if len(imported) == 1:
-            return f"Quiz '{Path(imported[0]).stem}' imported!"
-        return f"{len(imported)} quizzes imported!"
-
-    def _on_lifecycle_change(self, e) -> None:
-        """Re-check the inbox when the app returns to the foreground, so a
-        share into an already-running app is picked up too."""
-        if e.state != ft.AppLifecycleState.RESUME:
-            return
-        imported = self._import_from_inbox()
-        if not imported:
-            return
-        if self._current_view == "start":
-            self.show_startpage()
-        self.show_message(self._import_summary(imported))
 
     def _parse_quiz_text(self, quiz_text: str) -> tuple[list[list[str]], list[str]]:
         reader = csv.reader(io.StringIO(quiz_text), delimiter=";")
